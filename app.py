@@ -4,10 +4,17 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from deep_translator import GoogleTranslator
+import google.generativeai as genai
 
 st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
 
-# 1. 題材資料庫 (V9 終極產業鏈完整版)
+# 設定 Gemini API
+try:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+except:
+    pass # 若沒設定金鑰則先略過，避免網站直接崩潰
+
+# 1. 題材資料庫
 STOCK_DB = {
     "🤖 輝達GTC/伺服器": {"2330": "台積電", "2317": "鴻海", "2382": "廣達", "3231": "緯創", "2376": "技嘉", "6669": "緯穎", "3706": "神達"},
     "✨ CPO/光通訊": {"4979": "華星光", "3450": "聯鈞", "3081": "聯亞", "3363": "上詮", "6442": "光聖", "6451": "訊芯-KY", "3163": "波若威"},
@@ -79,6 +86,49 @@ def get_indices():
         except: res[name] = {"現價": 0, "漲跌幅": 0}
     return res
 
+# --- AI 大腦分析核心函數 ---
+@st.cache_data(ttl=3600) # AI 分析每小時更新一次即可
+def get_ai_market_analysis(indices_data, news_titles, theme_df):
+    if "GEMINI_API_KEY" not in st.secrets:
+        return "⚠️ 請先在 Streamlit Secrets 設定 GEMINI_API_KEY，AI 才能開始運作喔！"
+    try:
+        # 使用速度快且免費額度高的 flash 模型
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        # 把今天的盤面數據打包成字串餵給 AI
+        market_str = f"加權指數漲跌幅: {indices_data.get('加權指數', {}).get('漲跌幅', 0)}%\n"
+        market_str += f"那斯達克漲跌幅: {indices_data.get('那斯達克', {}).get('漲跌幅', 0)}%\n"
+        market_str += f"費半指數漲跌幅: {indices_data.get('費半指數', {}).get('漲跌幅', 0)}%\n"
+        
+        # 抓取今天最強跟最弱的題材
+        strong_theme = theme_df.iloc[0]['題材名稱'] if not theme_df.empty else "無"
+        weak_theme = theme_df.iloc[-1]['題材名稱'] if not theme_df.empty else "無"
+        market_str += f"今日最強題材: {strong_theme}\n今日最弱題材: {weak_theme}\n"
+        
+        # 新聞摘要 (限制前 15 則以免超過 AI 閱讀負擔)
+        news_str = "\n".join(news_titles[:15])
+        
+        # 寫給 AI 的指令 (Prompt Engineering)
+        prompt = f"""
+        你是一位專業且精準的台股量化交易分析師。請根據我提供的【市場數據】與【國內外頭條新聞】，寫一段大約 150 字的「盤後解析」。
+        
+        你的分析必須包含：
+        1. 判斷今天大盤整體表現是被哪個國際事件或新聞拖累/帶動？
+        2. 點出資金流向（例如：避險情緒升溫、資金轉進哪些題材等）。
+        3. 語氣要專業、客觀，直接切入重點，不需要寒暄。
+
+        【市場數據】
+        {market_str}
+        
+        【國內外頭條新聞】
+        {news_str}
+        """
+        
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"⚠️ AI 大腦暫時短路或超出免費額度限制：{str(e)}"
+
 # 5. 抓取個股與計算技術指標
 @st.cache_data(ttl=600)
 def get_stock_advanced_data(stock_dict):
@@ -141,21 +191,26 @@ with tab1:
     
     st.markdown("---")
     
-    # 預留給 AI 大盤解析的空間
-    st.subheader("🤖 AI 大盤盤後解析 (開發中)")
-    st.info("💡 系統即將接入 LLM 模組，綜合當日加權指數表現與國內外頭條新聞，自動推論市場漲跌之核心敘事邏輯。")
+    # === 新增：AI 大盤解析區塊 ===
+    st.subheader("🤖 AI 大盤盤後即時解析")
+    with st.spinner("AI 大腦正在閱讀新聞與盤面數據，撰寫解析中..."):
+        news_titles = get_market_news()
+        theme_df = get_all_themes_summary()
+        
+        # 呼叫 AI 幫你寫分析
+        ai_analysis = get_ai_market_analysis(indices_data, news_titles, theme_df)
+        st.info(ai_analysis)
+        
     st.markdown("---")
+    # ==============================
     
     col_left, col_right = st.columns([1, 1])
     with col_left:
         st.subheader("🔥 今日題材熱度排行")
-        with st.spinner("計算各題材資金動向中..."):
-            theme_df = get_all_themes_summary()
-            if not theme_df.empty:
-                st.dataframe(theme_df, column_config={"平均漲跌幅(%)": st.column_config.ProgressColumn("平均漲跌幅(%)", min_value=-10, max_value=10, format="%.2f %%")}, use_container_width=True, hide_index=True)
+        if not theme_df.empty:
+            st.dataframe(theme_df, column_config={"平均漲跌幅(%)": st.column_config.ProgressColumn("平均漲跌幅(%)", min_value=-10, max_value=10, format="%.2f %%")}, use_container_width=True, hide_index=True)
     with col_right:
         st.subheader("📰 題材觸發雷達")
-        news_titles = get_market_news()
         matched = False
         for title in news_titles:
             for theme, keywords in THEME_KEYWORDS.items():
