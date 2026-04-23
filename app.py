@@ -55,6 +55,10 @@ THEME_KEYWORDS = {
     "低軌衛星": ["低軌衛星", "SpaceX", "Satellite"]
 }
 
+# 初始化 Session State 來記憶 AI 分析結果 (避免切換分頁重新消耗額度)
+if "ai_analysis_text" not in st.session_state:
+    st.session_state.ai_analysis_text = ""
+
 # 3. 自動抓新聞
 @st.cache_data(ttl=1800)
 def get_market_news():
@@ -87,7 +91,7 @@ def get_indices():
         except: res[name] = {"現價": 0, "漲跌幅": 0}
     return res
 
-# --- AI 大腦分析核心函數 (白話文老手人設版) ---
+# --- AI 大腦分析核心函數 ---
 @st.cache_data(ttl=3600)
 def get_ai_market_analysis(indices_data, news_titles, theme_df):
     if "GEMINI_API_KEY" not in st.secrets:
@@ -114,7 +118,6 @@ def get_ai_market_analysis(indices_data, news_titles, theme_df):
         
         news_str = "\n".join(news_titles[:15])
         
-        # 這裡是關鍵！用口語化、實戰角度的 Prompt 設定 AI 人設
         prompt = f"""
         你現在是一位實戰經驗豐富、說話接地氣的台股操盤手。請根據我提供的【市場數據】與【國內外頭條新聞】，寫一段大約 150 字的「大盤與題材盤後分析」。
         
@@ -197,23 +200,30 @@ with tab1:
     
     st.markdown("---")
     
-    # 標題已經為你修改成更精準的名稱
     st.subheader("🤖 大盤與題材盤後分析")
-    with st.spinner("AI 老手正在閱讀新聞與盤面數據，撰寫白話文解析中..."):
-        news_titles = get_market_news()
-        theme_df = get_all_themes_summary()
-        ai_analysis = get_ai_market_analysis(indices_data, news_titles, theme_df)
-        st.info(ai_analysis)
+    
+    # 建立一個按鈕，按下去才會去呼叫 AI
+    if st.button("✨ 產生最新盤後解析", use_container_width=True):
+        with st.spinner("AI 老手正在閱讀新聞與盤面數據，撰寫白話文解析中..."):
+            news_titles = get_market_news()
+            theme_df = get_all_themes_summary()
+            st.session_state.ai_analysis_text = get_ai_market_analysis(indices_data, news_titles, theme_df)
+    
+    # 如果已經有分析結果，就顯示出來
+    if st.session_state.ai_analysis_text:
+        st.info(st.session_state.ai_analysis_text)
         
     st.markdown("---")
     
     col_left, col_right = st.columns([1, 1])
     with col_left:
         st.subheader("🔥 今日題材熱度排行")
+        theme_df = get_all_themes_summary() # 確保不在按鈕內也能獨立顯示
         if not theme_df.empty:
             st.dataframe(theme_df, column_config={"平均漲跌幅(%)": st.column_config.ProgressColumn("平均漲跌幅(%)", min_value=-10, max_value=10, format="%.2f %%")}, use_container_width=True, hide_index=True)
     with col_right:
         st.subheader("📰 題材觸發雷達")
+        news_titles = get_market_news() # 確保不在按鈕內也能獨立顯示
         matched = False
         for title in news_titles:
             for theme, keywords in THEME_KEYWORDS.items():
