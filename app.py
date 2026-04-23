@@ -36,10 +36,15 @@ THEME_KEYWORDS = {
     "記憶體": ["記憶體", "DRAM", "HBM", "Micron", "Memory"]
 }
 
-# 4. 自動抓取新聞功能 (國內鉅亨網 + 國際 CNBC 雙引擎)
+from deep_translator import GoogleTranslator
+
+# 4. 自動抓取新聞功能 (國內 + 國際翻譯雙引擎)
 @st.cache_data(ttl=1800)
 def get_market_news():
     news_list = []
+    
+    # 建立翻譯器
+    translator = GoogleTranslator(source='auto', target='zh-TW')
     
     # [國內] 鉅亨網台股新聞
     try:
@@ -51,13 +56,32 @@ def get_market_news():
     except:
         pass
 
-    # [國際] CNBC Top News (使用 RSS)
+    # [國際] CNBC Top News (自動翻譯版)
     try:
-        url_global = "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114"
-        res_global = requests.get(url_global, timeout=5)
-        soup_global = BeautifulSoup(res_global.text, 'xml')
-        global_titles = [f"[國際] {item.title.text}" for item in soup_global.find_all('item')[:10]]
-        news_list.extend(global_titles)
+        url_cnbc = "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114"
+        res_cnbc = requests.get(url_cnbc, timeout=5)
+        soup_cnbc = BeautifulSoup(res_cnbc.text, 'xml')
+        
+        for item in soup_cnbc.find_all('item')[:10]:
+            eng_title = item.title.text
+            try:
+                # 把英文標題翻譯成繁體中文
+                zh_title = translator.translate(eng_title)
+                news_list.append(f"[CNBC] {zh_title} (原文: {eng_title})")
+            except:
+                news_list.append(f"[CNBC] {eng_title}")
+    except:
+        pass
+        
+    # [國際] 金十數據 (市場快訊 RSS)
+    try:
+        url_jin10 = "https://rsshub.app/jin10/topic/3103" # 使用開源 RSSHub 抓取
+        res_jin10 = requests.get(url_jin10, timeout=5)
+        soup_jin10 = BeautifulSoup(res_jin10.text, 'xml')
+        
+        for item in soup_jin10.find_all('item')[:5]:
+            jin10_title = item.title.text
+            news_list.append(f"[金十快訊] {jin10_title}")
     except:
         pass
         
