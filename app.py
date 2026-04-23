@@ -15,7 +15,7 @@ STOCK_DB = {
 }
 
 # 2. 網頁標題
-st.title("諠諠的台股題材觀測站 🚀")
+st.title("台股題材觀測站 🚀")
 
 # 3. 側邊欄：選擇要分析的題材
 selected_theme = st.sidebar.selectbox("請選擇要追蹤的題材", list(STOCK_DB.keys()))
