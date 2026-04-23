@@ -88,7 +88,6 @@ def get_indices():
         except: res[name] = {"現價": 0, "漲跌幅": 0}
     return res
 
-# 關鍵修復：將 EPS 抓取獨立，確保股價與 KDJ 絕對能跑出來
 @st.cache_data(ttl=600)
 def get_stock_advanced_data(stock_dict):
     data_list = []
@@ -120,7 +119,7 @@ def get_stock_advanced_data(stock_dict):
             display_name = f"{name} ({sign}{round(change_pct, 2)}%)"
             kdj_history_dict[display_name] = kdj_df
             
-            # 安全隔離區：抓不到 EPS 就給 N/A，不影響前面的股價計算
+            # 安全隔離區：EPS 抓不到也不會死當
             try:
                 eps_val = t.info.get('trailingEps', None)
                 eps_str = round(eps_val, 2) if eps_val else "N/A"
@@ -135,8 +134,7 @@ def get_stock_advanced_data(stock_dict):
                 "多空趨勢": trend, 
                 "近四季EPS": eps_str
             })
-        except Exception as e:
-            # 股價真的抓不到時直接略過，不印在網頁上干擾視覺
+        except:
             pass
             
     return pd.DataFrame(data_list), kdj_history_dict
@@ -173,7 +171,8 @@ with tab1:
         else:
             with st.spinner("AI 正在撰寫分析中..."):
                 try:
-                    model = genai.GenerativeModel('models/gemini-1.5-flash')
+                    # 強制指定輕量高速版模型 (避免2.5的嚴格限制)
+                    model = genai.GenerativeModel('gemini-1.5-flash-8b')
                     news_titles = get_market_news()
                     
                     theme_summary = []
@@ -187,7 +186,7 @@ with tab1:
                     response = model.generate_content(prompt)
                     st.session_state.ai_analysis_text = response.text
                 except Exception as e:
-                    st.error(f"AI 呼叫失敗：{str(e)}")
+                    st.error(f"AI 呼叫失敗，如果一直出現此錯誤，可能是今日 API 額度已耗盡：{str(e)}")
                     
     if st.session_state.ai_analysis_text:
         st.info(st.session_state.ai_analysis_text)
