@@ -29,22 +29,42 @@ THEME_KEYWORDS = {
     "CoWoS/先進封裝": ["CoWoS", "先進封裝", "封測", "台積電設備"],
     "BBU(備援電池)": ["BBU", "備援電池", "電池模組"],
     "AI機器人/自動化": ["機器人", "自動化", "所羅門", "無人機"],
-    "重電/綠能電網": ["重電", "電網", "綠能", "台電", "變壓器"]
+    "重電/綠能電網": ["重電", "電網", "綠能", "台電", "變壓器"],
+    "輝達GTC/伺服器": ["輝達", "NVIDIA", "伺服器", "GB200", "Nvidia", "AI chip"],
+    "CPO/光通訊": ["CPO", "光通訊", "矽光子", "Photonics"],
+    "低軌衛星": ["低軌衛星", "SpaceX", "Satellite"],
+    "記憶體": ["記憶體", "DRAM", "HBM", "Micron", "Memory"]
+}
 }
 
-# 3. 自動抓取新聞功能 (爬蟲模組)
-@st.cache_data(ttl=1800) # 每 30 分鐘才重新抓一次，避免資源消耗過度
+# 3. 自動抓取新聞功能 (國內 + 國際雙引擎)
+@st.cache_data(ttl=1800)
 def get_market_news():
-    url = "https://news.cnyes.com/news/cat/tw_stock"
+    news_list = []
+    
+    # [國內] 鉅亨網台股新聞
     try:
-        res = requests.get(url, timeout=5)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        # 抓取鉅亨網的標題
-        titles = [t.get_text() for t in soup.select('h3')[:20]]
-        return titles
+        url_tw = "https://news.cnyes.com/news/cat/tw_stock"
+        res_tw = requests.get(url_tw, timeout=5)
+        soup_tw = BeautifulSoup(res_tw.text, 'html.parser')
+        tw_titles = [f"[國內] {t.get_text()}" for t in soup_tw.select('h3')[:10]]
+        news_list.extend(tw_titles)
     except:
-        return []
+        pass
 
+    # [國際] CNBC Top News (使用 RSS)
+    try:
+        url_global = "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114"
+        res_global = requests.get(url_global, timeout=5)
+        # 解析 RSS 的 XML 格式
+        soup_global = BeautifulSoup(res_global.text, 'xml')
+        # 抓取 <item> 裡面的 <title>
+        global_titles = [f"[國際] {item.title.text}" for item in soup_global.find_all('item')[:10]]
+        news_list.extend(global_titles)
+    except:
+        pass
+        
+    return news_list
 # --- 網站視覺化排版開始 ---
 
 st.header("📰 即時新聞與題材觸發雷達")
