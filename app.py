@@ -87,13 +87,12 @@ def get_indices():
         except: res[name] = {"現價": 0, "漲跌幅": 0}
     return res
 
-# --- AI 大腦分析核心函數 (自動尋找可用模型版) ---
+# --- AI 大腦分析核心函數 (白話文老手人設版) ---
 @st.cache_data(ttl=3600)
 def get_ai_market_analysis(indices_data, news_titles, theme_df):
     if "GEMINI_API_KEY" not in st.secrets:
         return "⚠️ 請先在 Streamlit Secrets 設定 GEMINI_API_KEY，AI 才能開始運作喔！"
     try:
-        # 自動向 Google 詢問目前權限內可用的文字生成模型
         available_model = None
         for m in genai.list_models():
             if 'generateContent' in m.supported_generation_methods:
@@ -115,13 +114,14 @@ def get_ai_market_analysis(indices_data, news_titles, theme_df):
         
         news_str = "\n".join(news_titles[:15])
         
+        # 這裡是關鍵！用口語化、實戰角度的 Prompt 設定 AI 人設
         prompt = f"""
-        你是一位專業且精準的台股量化交易分析師。請根據我提供的【市場數據】與【國內外頭條新聞】，寫一段大約 150 字的「盤後解析」。
+        你現在是一位實戰經驗豐富、說話接地氣的台股操盤手。請根據我提供的【市場數據】與【國內外頭條新聞】，寫一段大約 150 字的「大盤與題材盤後分析」。
         
-        你的分析必須包含：
-        1. 判斷今天大盤整體表現是被哪個國際事件或新聞拖累/帶動？
-        2. 點出資金流向（例如：避險情緒升溫、資金轉進哪些題材等）。
-        3. 語氣要專業、客觀，直接切入重點，不需要寒暄。
+        請用「白話文」讓一般投資人也能輕鬆聽懂，絕對不要用太文言文或死板的學術語氣。
+        你的分析必須包含兩點：
+        1. 【大盤今日走勢】：解釋今天加權指數為什麼這樣走？（判斷有沒有被美股拖累/帶動，或是被什麼國內外大新聞影響）。
+        2. 【題材股資金流向】：點出今天台灣盤面的資金跑去哪了？（結合我提供的最強/最弱題材，白話說明資金是在避險、觀望還是積極點火攻擊哪個族群）。
 
         【市場數據】
         {market_str}
@@ -197,8 +197,9 @@ with tab1:
     
     st.markdown("---")
     
-    st.subheader("🤖 AI 大盤盤後即時解析")
-    with st.spinner("AI 大腦正在閱讀新聞與盤面數據，撰寫解析中..."):
+    # 標題已經為你修改成更精準的名稱
+    st.subheader("🤖 大盤與題材盤後分析")
+    with st.spinner("AI 老手正在閱讀新聞與盤面數據，撰寫白話文解析中..."):
         news_titles = get_market_news()
         theme_df = get_all_themes_summary()
         ai_analysis = get_ai_market_analysis(indices_data, news_titles, theme_df)
