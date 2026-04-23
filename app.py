@@ -172,7 +172,7 @@ with tab1:
             with st.spinner("AI 正在撰寫分析中..."):
                 try:
                     # 強制指定輕量高速版模型 (避免2.5的嚴格限制)
-                    model = genai.GenerativeModel('gemini-1.5-flash-8b')
+                    model = genai.GenerativeModel('gemini-1.5-flash')
                     news_titles = get_market_news()
                     
                     theme_summary = []
