@@ -95,12 +95,13 @@ def get_indices():
 @st.cache_data(ttl=3600)
 # --- AI 大腦分析核心函數 (拔除耗電設備，寫死穩定模型版) ---
 # 這次拿掉 cache_data，完全交由按鈕與 Session State 來控制，避免大盤跳動導致自動狂刷
+d# --- AI 大腦分析核心函數 (強制綁定高額度穩定版模型) ---
 def get_ai_market_analysis(indices_data, news_titles, theme_df):
     if "GEMINI_API_KEY" not in st.secrets:
         return "⚠️ 請先在 Streamlit Secrets 設定 GEMINI_API_KEY，AI 才能開始運作喔！"
     try:
-        # 直接指定最新且免費額度最穩定的模型，不浪費額度去 list_models 了
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # 絕對不要用迴圈自動找，強制指定每日額度有 1500 次的 1.5-flash
+        model = genai.GenerativeModel('models/gemini-1.5-flash')
         
         market_str = f"加權指數漲跌幅: {indices_data.get('加權指數', {}).get('漲跌幅', 0)}%\n"
         market_str += f"那斯達克漲跌幅: {indices_data.get('那斯達克', {}).get('漲跌幅', 0)}%\n"
@@ -133,7 +134,7 @@ def get_ai_market_analysis(indices_data, news_titles, theme_df):
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        return f"⚠️ 發生錯誤，可能是 Google API 塞車或額度限制，請稍等一分鐘後再試：{str(e)}"
+        return f"⚠️ 發生錯誤：{str(e)}"
 
 # 5. 抓取個股與計算技術指標
 @st.cache_data(ttl=600)
