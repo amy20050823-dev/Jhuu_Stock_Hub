@@ -93,20 +93,14 @@ def get_indices():
 
 # --- AI 大腦分析核心函數 ---
 @st.cache_data(ttl=3600)
+# --- AI 大腦分析核心函數 (拔除耗電設備，寫死穩定模型版) ---
+# 這次拿掉 cache_data，完全交由按鈕與 Session State 來控制，避免大盤跳動導致自動狂刷
 def get_ai_market_analysis(indices_data, news_titles, theme_df):
     if "GEMINI_API_KEY" not in st.secrets:
         return "⚠️ 請先在 Streamlit Secrets 設定 GEMINI_API_KEY，AI 才能開始運作喔！"
     try:
-        available_model = None
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                available_model = m.name
-                break
-                
-        if not available_model:
-            return "⚠️ 你的 API 金鑰目前沒有綁定任何可用的文字生成模型。"
-
-        model = genai.GenerativeModel(available_model)
+        # 直接指定最新且免費額度最穩定的模型，不浪費額度去 list_models 了
+        model = genai.GenerativeModel('gemini-1.5-flash')
         
         market_str = f"加權指數漲跌幅: {indices_data.get('加權指數', {}).get('漲跌幅', 0)}%\n"
         market_str += f"那斯達克漲跌幅: {indices_data.get('那斯達克', {}).get('漲跌幅', 0)}%\n"
@@ -118,12 +112,12 @@ def get_ai_market_analysis(indices_data, news_titles, theme_df):
         
         news_str = "\n".join(news_titles[:15])
         
-        # 這裡是關鍵！重新設定 AI 人設與絕對禁令
+        # 高冷專業版 Prompt
         prompt = f"""
         你是一位專業的台股分析師。請根據我提供的【市場數據】與【國內外頭條新聞】，寫一段約 150 字的「大盤與題材盤後分析」。
         
         寫作要求：
-        1. 簡單易懂、精煉客觀：讓一般及剛入門投資人能輕鬆看懂大盤與資金動向，不要用艱澀的學術詞彙。
+        1. 簡單易懂、精煉客觀：讓一般投資人能輕鬆看懂大盤與資金動向，不要用艱澀的學術詞彙。
         2. 絕對禁止：禁止使用任何問候語（如：大家好、午安）、語助詞（如：啦、齁、啊、吧、呢）或過度誇張的語氣。保持冷靜、直白。
         3. 分析重點必須包含兩段：
            - 【大盤分析】：精簡說明加權指數今日表現，以及背後受什麼國際新聞或美股表現影響。
@@ -139,7 +133,7 @@ def get_ai_market_analysis(indices_data, news_titles, theme_df):
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        return f"⚠️ AI 大腦發生未知的連線狀況：{str(e)}"
+        return f"⚠️ 發生錯誤，可能是 Google API 塞車或額度限制，請稍等一分鐘後再試：{str(e)}"
 
 # 5. 抓取個股與計算技術指標
 @st.cache_data(ttl=600)
