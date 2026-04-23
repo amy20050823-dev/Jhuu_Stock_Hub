@@ -4,19 +4,13 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from deep_translator import GoogleTranslator
-import google.generativeai as genai
+import json
 
 # ================= 1. 網頁配置與初始化 =================
 st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
 
 if "ai_analysis_text" not in st.session_state:
     st.session_state.ai_analysis_text = ""
-
-try:
-    if "GEMINI_API_KEY" in st.secrets:
-        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-except:
-    pass
 
 # ================= 2. 產業題材資料庫 =================
 STOCK_DB = {
@@ -119,7 +113,6 @@ def get_stock_advanced_data(stock_dict):
             display_name = f"{name} ({sign}{round(change_pct, 2)}%)"
             kdj_history_dict[display_name] = kdj_df
             
-            # 安全隔離區：EPS 抓不到也不會死當
             try:
                 eps_val = t.info.get('trailingEps', None)
                 eps_str = round(eps_val, 2) if eps_val else "N/A"
@@ -165,16 +158,20 @@ with tab1:
     
     st.markdown("---")
     st.subheader("🤖 大盤與題材盤後分析")
-    if st.button("✨ 產生最新盤後解析", use_container_width=True):
+    
+    # 手動輸入的備案：如果你真的想自己打，可以在這裡輸入
+    manual_input = st.text_area("✍️ 如果 AI 一直掛掉，你可以直接在這裡手動輸入盤後日誌：", value=st.session_state.ai_analysis_text)
+    if manual_input != st.session_state.ai_analysis_text:
+        st.session_state.ai_analysis_text = manual_input
+    
+    if st.button("✨ 呼叫 AI 產生最新盤後解析", use_container_width=True):
         if "GEMINI_API_KEY" not in st.secrets:
             st.error("⚠️ 請先在 Secrets 設定 GEMINI_API_KEY")
         else:
-            with st.spinner("AI 正在撰寫分析中..."):
+            with st.spinner("AI 正在撰寫分析中 (直接連線模式)..."):
                 try:
-                    # 強制指定輕量高速版模型 (避免2.5的嚴格限制)
-                    model = genai.GenerativeModel('gemini-pro')
+                    # 準備給 AI 的資料
                     news_titles = get_market_news()
-                    
                     theme_summary = []
                     for theme, stocks in STOCK_DB.items():
                         df_t, _ = get_stock_advanced_data(stocks)
@@ -183,14 +180,25 @@ with tab1:
                     df_theme_ai = pd.DataFrame(theme_summary).sort_values("平均漲跌", ascending=False) if theme_summary else pd.DataFrame()
                     
                     prompt = f"你是專業台股分析師。根據數據寫150字盤後分析。絕對禁止問候語與語助詞。大盤：{indices_data.get('加權指數',{}).get('漲跌幅',0)}%。強弱題材：{df_theme_ai.head(1)['題材'].values if not df_theme_ai.empty else '無'} / {df_theme_ai.tail(1)['題材'].values if not df_theme_ai.empty else '無'}。新聞：{news_titles[:10]}。分兩段：【大盤分析】、【資金流向】。"
-                    response = model.generate_content(prompt)
-                    st.session_state.ai_analysis_text = response.text
-                except Exception as e:
-                    st.error(f"AI 呼叫失敗，如果一直出現此錯誤，可能是今日 API 額度已耗盡：{str(e)}")
                     
-    if st.session_state.ai_analysis_text:
-        st.info(st.session_state.ai_analysis_text)
-        
+                    # 🚀 終極殺手鐧：繞過 google-generativeai 套件，直接發送 HTTP 請求
+                    api_key = st.secrets["GEMINI_API_KEY"]
+                    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+                    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+                    headers = {'Content-Type': 'application/json'}
+                    
+                    response = requests.post(url, json=payload, headers=headers)
+                    result_data = response.json()
+                    
+                    if "candidates" in result_data:
+                        st.session_state.ai_analysis_text = result_data["candidates"][0]["content"]["parts"][0]["text"]
+                        st.rerun() # 重新載入畫面以顯示結果
+                    else:
+                        st.error(f"Google 伺服器回傳異常：{result_data}")
+                        
+                except Exception as e:
+                    st.error(f"連線徹底失敗，請確認 API 金鑰：{str(e)}")
+                    
     st.markdown("---")
     col_l, col_r = st.columns([1, 1])
     with col_l:
