@@ -9,25 +9,23 @@ import google.generativeai as genai
 # ================= 1. 網頁配置與初始化 =================
 st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
 
-# 初始化 Session State，用來記憶 AI 解析，避免重複消耗 API 額度
 if "ai_analysis_text" not in st.session_state:
     st.session_state.ai_analysis_text = ""
 
-# 設定 Gemini API
 try:
     if "GEMINI_API_KEY" in st.secrets:
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 except:
     pass
 
-# ================= 2. 產業題材資料庫 (V14 完整版) =================
+# ================= 2. 產業題材資料庫 =================
 STOCK_DB = {
     "🤖 輝達GTC/伺服器": {"2330": "台積電", "2317": "鴻海", "2382": "廣達", "3231": "緯創", "2376": "技嘉", "6669": "緯穎", "3706": "神達"},
     "✨ CPO/光通訊": {"4979": "華星光", "3450": "聯鈞", "3081": "聯亞", "3363": "上詮", "6442": "光聖", "6451": "訊芯-KY", "3163": "波若威"},
     "🖨️ PCB/銅箔基板": {"2383": "台光電", "6213": "聯茂", "6274": "台燿", "2368": "金像電", "3037": "欣興", "8046": "南電", "3189": "景碩", "2313": "華通"},
     "⚡ 網通/石英元件": {"3042": "晶技", "3221": "台嘉碩", "8182": "加高", "2484": "希華"},
     "🧠 記憶體": {"2408": "南亞科", "2344": "華邦電", "8299": "群聯", "3260": "威剛"},
-    "❄️ 散熱管理": {"3017": "奇鳳", "3324": "雙鴻", "2421": "建準", "6230": "超眾", "8996": "高力"},
+    "❄️ 散熱管理": {"3017": "奇鋐", "3324": "雙鴻", "2421": "建準", "6230": "超眾", "8996": "高力"},
     "🔌 電源供應器": {"2308": "台達電", "2301": "光寶科", "6409": "旭隼"},
     "🔋 BBU(備援電池)": {"6121": "新普", "3211": "順達", "3323": "加百裕", "6781": "AES-KY"},
     "📟 被動元件": {"2327": "國巨", "2492": "華新科", "3026": "禾伸堂"},
@@ -65,13 +63,11 @@ def get_market_news():
     news = []
     translator = GoogleTranslator(source='auto', target='zh-TW')
     try:
-        url_tw = "https://news.cnyes.com/news/cat/tw_stock"
-        soup = BeautifulSoup(requests.get(url_tw, timeout=5).text, 'html.parser')
+        soup = BeautifulSoup(requests.get("https://news.cnyes.com/news/cat/tw_stock", timeout=5).text, 'html.parser')
         news.extend([f"[國內] {t.get_text()}" for t in soup.select('h3')[:20]])
     except: pass
     try:
-        url_cnbc = "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114"
-        soup = BeautifulSoup(requests.get(url_cnbc, timeout=5).text, 'xml')
+        soup = BeautifulSoup(requests.get("https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114", timeout=5).text, 'xml')
         for item in soup.find_all('item')[:15]:
             try: news.append(f"[國際] {translator.translate(item.title.text)}")
             except: pass
@@ -92,6 +88,7 @@ def get_indices():
         except: res[name] = {"現價": 0, "漲跌幅": 0}
     return res
 
+# 關鍵修復：將 EPS 抓取獨立，確保股價與 KDJ 絕對能跑出來
 @st.cache_data(ttl=600)
 def get_stock_advanced_data(stock_dict):
     data_list = []
@@ -105,14 +102,12 @@ def get_stock_advanced_data(stock_dict):
             close, prev_close = hist['Close'].iloc[-1], hist['Close'].iloc[-2]
             change_pct = ((close - prev_close) / prev_close) * 100
             
-            # 多空判斷 (5日與20日線)
             ma5 = hist['Close'].rolling(5).mean().iloc[-1]
             ma20 = hist['Close'].rolling(20).mean().iloc[-1]
             if close > ma5 and close > ma20: trend = "📈 多頭"
             elif close < ma5 and close < ma20: trend = "📉 空頭"
             else: trend = "🔄 整理"
 
-            # KDJ 計算 (9,3,3)
             low_9 = hist['Low'].rolling(9).min()
             high_9 = hist['High'].rolling(9).max()
             rsv = (hist['Close'] - low_9) / (high_9 - low_9) * 100
@@ -120,35 +115,41 @@ def get_stock_advanced_data(stock_dict):
             d = k.ewm(com=2).mean()
             j = 3 * k - 2 * d
             
-            # 準備 KDJ 線圖資料 (取近 30 筆)
             kdj_df = pd.DataFrame({'K': k, 'D': d, 'J': j}).tail(30)
-            
             sign = "+" if change_pct > 0 else ""
             display_name = f"{name} ({sign}{round(change_pct, 2)}%)"
-            
             kdj_history_dict[display_name] = kdj_df
+            
+            # 安全隔離區：抓不到 EPS 就給 N/A，不影響前面的股價計算
+            try:
+                eps_val = t.info.get('trailingEps', None)
+                eps_str = round(eps_val, 2) if eps_val else "N/A"
+            except:
+                eps_str = "N/A"
+
             data_list.append({
                 "代號": symbol, 
                 "指標股": display_name, 
                 "漲跌數值": change_pct, 
                 "現價": round(close, 2), 
                 "多空趨勢": trend, 
-                "近四季EPS": round(t.info.get('trailingEps', 0) or 0, 2)
+                "近四季EPS": eps_str
             })
-        except: pass
+        except Exception as e:
+            # 股價真的抓不到時直接略過，不印在網頁上干擾視覺
+            pass
+            
     return pd.DataFrame(data_list), kdj_history_dict
 
-# ================= 4. UI 視覺化函數 =================
+# ================= 4. UI 視覺化與介面 =================
 def color_taiwan_stock(val):
     if isinstance(val, (int, float)): return ''
     if "(+" in val or "📈" in val: return 'color: #ff4b4b; font-weight: bold;'
     if "(-" in val or "📉" in val: return 'color: #00cc96; font-weight: bold;'
     return ''
 
-# ================= 5. 介面設計 =================
 st.title("台股題材動態觀測站 🚀")
 
-# 側邊欄控制
 st.sidebar.header("系統控制")
 if st.sidebar.button("🔄 強制刷新所有數據"):
     st.cache_data.clear()
@@ -157,7 +158,6 @@ if st.sidebar.button("🔄 強制刷新所有數據"):
 
 tab1, tab2 = st.tabs(["📈 首頁：大盤與題材熱度", "🎯 細部題材：技術面分析"])
 
-# ----- 分頁 1 -----
 with tab1:
     st.subheader("🌐 全球市場溫度計")
     indices_data = get_indices()
@@ -175,7 +175,15 @@ with tab1:
                 try:
                     model = genai.GenerativeModel('models/gemini-1.5-flash')
                     news_titles = get_market_news()
-                    prompt = f"你是台股分析師。請根據數據寫150字分析。禁止問候語與語助詞。大盤漲跌：{indices_data.get('加權指數',{}).get('漲跌幅',0)}%。新聞摘要：{news_titles[:10]}。分兩段：【大盤分析】、【題材群資金流向】。"
+                    
+                    theme_summary = []
+                    for theme, stocks in STOCK_DB.items():
+                        df_t, _ = get_stock_advanced_data(stocks)
+                        if not df_t.empty:
+                            theme_summary.append({"題材": theme, "平均漲跌": round(df_t["漲跌數值"].mean(), 2)})
+                    df_theme_ai = pd.DataFrame(theme_summary).sort_values("平均漲跌", ascending=False) if theme_summary else pd.DataFrame()
+                    
+                    prompt = f"你是專業台股分析師。根據數據寫150字盤後分析。絕對禁止問候語與語助詞。大盤：{indices_data.get('加權指數',{}).get('漲跌幅',0)}%。強弱題材：{df_theme_ai.head(1)['題材'].values if not df_theme_ai.empty else '無'} / {df_theme_ai.tail(1)['題材'].values if not df_theme_ai.empty else '無'}。新聞：{news_titles[:10]}。分兩段：【大盤分析】、【資金流向】。"
                     response = model.generate_content(prompt)
                     st.session_state.ai_analysis_text = response.text
                 except Exception as e:
@@ -188,36 +196,37 @@ with tab1:
     col_l, col_r = st.columns([1, 1])
     with col_l:
         st.subheader("🔥 今日題材熱度排行")
-        theme_summary = []
-        for theme, stocks in STOCK_DB.items():
-            df_t, _ = get_stock_advanced_data(stocks)
-            if not df_t.empty:
-                theme_summary.append({"題材": theme, "平均漲跌(%)": round(df_t["漲跌數值"].mean(), 2)})
-        if theme_summary:
-            sdf = pd.DataFrame(theme_summary).sort_values("平均漲跌(%)", ascending=False)
-            st.dataframe(sdf, column_config={"平均漲跌(%)": st.column_config.ProgressColumn("平均漲跌(%)", min_value=-10, max_value=10, format="%.2f %%")}, use_container_width=True, hide_index=True)
+        with st.spinner("計算題材熱度中..."):
+            theme_summary = []
+            for theme, stocks in STOCK_DB.items():
+                df_t, _ = get_stock_advanced_data(stocks)
+                if not df_t.empty:
+                    theme_summary.append({"題材名稱": theme, "平均漲跌幅(%)": round(df_t["漲跌數值"].mean(), 2)})
+            if theme_summary:
+                sdf = pd.DataFrame(theme_summary).sort_values("平均漲跌幅(%)", ascending=False)
+                st.dataframe(sdf, column_config={"平均漲跌幅(%)": st.column_config.ProgressColumn("平均漲跌幅(%)", min_value=-10, max_value=10, format="%.2f %%")}, use_container_width=True, hide_index=True)
+            else:
+                st.warning("⚠️ 暫時無法抓取盤面資料，請點擊左側『強制刷新』。")
+                
     with col_r:
         st.subheader("📰 題材觸發雷達")
         news_list = get_market_news()
         found = False
         for n in news_list:
-            for k, keywords in THEME_KEYWORDS.items():
+            for theme_name, keywords in THEME_KEYWORDS.items():
                 if any(kw in n for kw in keywords):
-                    st.error(f"🚨 觸發【{theme}】: {n}")
+                    st.error(f"🚨 觸發【{theme_name}】: {n}")
                     found = True
-        if not found: st.info("目前無題材觸發。")
+        if not found: st.info("💡 目前無明顯題材觸發。")
 
-# ----- 分頁 2 -----
 with tab2:
     selected_theme = st.sidebar.selectbox("請選擇要追蹤的盤面族群", list(STOCK_DB.keys()))
-    st.subheader(f"📊 {selected_theme} - 技術面與 KDJ 分析")
+    st.subheader(f"📊 {selected_theme} - 技術與基本面分析")
     
-    # 這裡就是修復關鍵：強制在 spinner 內執行資料獲取與表格渲染
     with st.spinner("資料載入中..."):
         df_final, kdj_all = get_stock_advanced_data(STOCK_DB[selected_theme])
         
         if not df_final.empty:
-            # 顯示表格
             display_df = df_final.drop(columns=['漲跌數值']).set_index("代號")
             st.dataframe(display_df.style.map(color_taiwan_stock, subset=['指標股', '多空趨勢']), use_container_width=True)
             
@@ -227,5 +236,5 @@ with tab2:
             if target_stock in kdj_all:
                 st.line_chart(kdj_all[target_stock], color=["#FFD700", "#1f77b4", "#FF4B4B"], height=350)
         else:
-            st.warning("⚠️ 無法取得該族群資料。原因可能是 Yahoo Finance 暫時限制連線，或該族群個股暫無資料。")
-            st.info("提示：請點擊側邊欄「強制刷新」按鈕再試一次，或稍等幾分鐘。")
+            st.warning("⚠️ 暫時無法取得該族群資料。原因可能是 Yahoo Finance 阻擋連線。")
+            st.info("💡 提示：請點擊左側「🔄 強制刷新所有數據」按鈕重試。")
