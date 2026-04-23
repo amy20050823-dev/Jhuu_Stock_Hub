@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 from deep_translator import GoogleTranslator
 import google.generativeai as genai
 
+# ================= 網頁基本設定 =================
 st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
 
 # 設定 Gemini API
@@ -15,7 +16,7 @@ try:
 except:
     pass
 
-# 1. 題材資料庫
+# ================= 資料庫設定 =================
 STOCK_DB = {
     "🤖 輝達GTC/伺服器": {"2330": "台積電", "2317": "鴻海", "2382": "廣達", "3231": "緯創", "2376": "技嘉", "6669": "緯穎", "3706": "神達"},
     "✨ CPO/光通訊": {"4979": "華星光", "3450": "聯鈞", "3081": "聯亞", "3363": "上詮", "6442": "光聖", "6451": "訊芯-KY", "3163": "波若威"},
@@ -35,7 +36,6 @@ STOCK_DB = {
     "🛰️ 低軌衛星": {"2313": "華通", "3491": "昇達科", "6271": "同欣電", "3380": "明泰"}
 }
 
-# 2. 新聞觸發關鍵字字典
 THEME_KEYWORDS = {
     "輝達GTC/伺服器": ["輝達", "NVIDIA", "伺服器", "GB200"],
     "CPO/光通訊": ["CPO", "光通訊", "矽光子"],
@@ -55,11 +55,11 @@ THEME_KEYWORDS = {
     "低軌衛星": ["低軌衛星", "SpaceX", "Satellite"]
 }
 
-# 初始化 Session State 來記憶 AI 分析結果 (避免切換分頁重新消耗額度)
+# 記憶 AI 分析結果，避免切換分頁重複消耗 API 額度
 if "ai_analysis_text" not in st.session_state:
     st.session_state.ai_analysis_text = ""
 
-# 3. 自動抓新聞
+# ================= 核心邏輯區 =================
 @st.cache_data(ttl=1800)
 def get_market_news():
     news = []
@@ -78,7 +78,6 @@ def get_market_news():
     except: pass
     return news
 
-# 4. 獲取大盤指數
 @st.cache_data(ttl=600)
 def get_indices():
     indices_dict = {"加權指數": "^TWII", "那斯達克": "^IXIC", "費半指數": "^SOX", "VIX恐慌": "^VIX"}
@@ -91,16 +90,10 @@ def get_indices():
         except: res[name] = {"現價": 0, "漲跌幅": 0}
     return res
 
-# --- AI 大腦分析核心函數 ---
-@st.cache_data(ttl=3600)
-# --- AI 大腦分析核心函數 (拔除耗電設備，寫死穩定模型版) ---
-# 這次拿掉 cache_data，完全交由按鈕與 Session State 來控制，避免大盤跳動導致自動狂刷
-d# --- AI 大腦分析核心函數 (強制綁定高額度穩定版模型) ---
 def get_ai_market_analysis(indices_data, news_titles, theme_df):
     if "GEMINI_API_KEY" not in st.secrets:
         return "⚠️ 請先在 Streamlit Secrets 設定 GEMINI_API_KEY，AI 才能開始運作喔！"
     try:
-        # 絕對不要用迴圈自動找，強制指定每日額度有 1500 次的 1.5-flash
         model = genai.GenerativeModel('models/gemini-1.5-flash')
         
         market_str = f"加權指數漲跌幅: {indices_data.get('加權指數', {}).get('漲跌幅', 0)}%\n"
@@ -113,7 +106,6 @@ def get_ai_market_analysis(indices_data, news_titles, theme_df):
         
         news_str = "\n".join(news_titles[:15])
         
-        # 高冷專業版 Prompt
         prompt = f"""
         你是一位專業的台股分析師。請根據我提供的【市場數據】與【國內外頭條新聞】，寫一段約 150 字的「大盤與題材盤後分析」。
         
@@ -130,13 +122,11 @@ def get_ai_market_analysis(indices_data, news_titles, theme_df):
         【國內外頭條新聞】
         {news_str}
         """
-        
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        return f"⚠️ 發生錯誤：{str(e)}"
+        return f"⚠️ 發生錯誤，請稍後再試：{str(e)}"
 
-# 5. 抓取個股與計算技術指標
 @st.cache_data(ttl=600)
 def get_stock_advanced_data(stock_dict):
     data_list, kdj_history_dict = [], {}
@@ -168,7 +158,6 @@ def get_stock_advanced_data(stock_dict):
         except: pass
     return pd.DataFrame(data_list), kdj_history_dict
 
-# 6. 計算首頁的所有題材熱度
 @st.cache_data(ttl=600)
 def get_all_themes_summary():
     summary = []
@@ -185,7 +174,7 @@ def color_taiwan_stock(val):
     if "(-" in val or "📉" in val: return 'color: #00cc96; font-weight: bold;'
     return ''
 
-# ================= 介面設計 =================
+# ================= 視覺化介面區 =================
 st.title("台股題材動態觀測站 🚀")
 tab1, tab2 = st.tabs(["📈 首頁：大盤與題材熱度", "🎯 細部題材：技術面與籌碼"])
 
@@ -199,15 +188,12 @@ with tab1:
     st.markdown("---")
     
     st.subheader("🤖 大盤與題材盤後分析")
-    
-    # 建立一個按鈕，按下去才會去呼叫 AI
     if st.button("✨ 產生最新盤後解析", use_container_width=True):
-        with st.spinner("AI 老手正在閱讀新聞與盤面數據，撰寫白話文解析中..."):
+        with st.spinner("AI 正在閱讀新聞與盤面數據，撰寫解析中..."):
             news_titles = get_market_news()
             theme_df = get_all_themes_summary()
             st.session_state.ai_analysis_text = get_ai_market_analysis(indices_data, news_titles, theme_df)
-    
-    # 如果已經有分析結果，就顯示出來
+            
     if st.session_state.ai_analysis_text:
         st.info(st.session_state.ai_analysis_text)
         
@@ -216,12 +202,15 @@ with tab1:
     col_left, col_right = st.columns([1, 1])
     with col_left:
         st.subheader("🔥 今日題材熱度排行")
-        theme_df = get_all_themes_summary() # 確保不在按鈕內也能獨立顯示
+        theme_df = get_all_themes_summary()
         if not theme_df.empty:
             st.dataframe(theme_df, column_config={"平均漲跌幅(%)": st.column_config.ProgressColumn("平均漲跌幅(%)", min_value=-10, max_value=10, format="%.2f %%")}, use_container_width=True, hide_index=True)
+        else:
+            st.warning("目前無法抓取盤面資料，請稍後再試。")
+            
     with col_right:
         st.subheader("📰 題材觸發雷達")
-        news_titles = get_market_news() # 確保不在按鈕內也能獨立顯示
+        news_titles = get_market_news()
         matched = False
         for title in news_titles:
             for theme, keywords in THEME_KEYWORDS.items():
@@ -233,12 +222,17 @@ with tab1:
 with tab2:
     selected_theme = st.sidebar.selectbox("請選擇要追蹤的盤面族群", list(STOCK_DB.keys()))
     st.subheader(f"📊 {selected_theme} - 技術與基本面分析")
+    
     with st.spinner(f'正在計算 {selected_theme} 的資料...'):
         df, kdj_dict = get_stock_advanced_data(STOCK_DB[selected_theme])
         if not df.empty:
             styled_df = df.drop(columns=['漲跌數值']).set_index("代號").style.map(color_taiwan_stock, subset=['指標股', '多空趨勢'])
             st.dataframe(styled_df, use_container_width=True)
+            
             st.markdown("---")
             st.subheader("📉 個股 KDJ 互動走勢圖")
             selected_stock = st.selectbox("請選擇要查看詳細指標的個股：", df['指標股'].tolist())
-            if selected_stock in kdj_dict: st.line_chart(kdj_dict[selected_stock], color=["#FFD700", "#1f77b4", "#FF4B4B"], height=300)
+            if selected_stock in kdj_dict: 
+                st.line_chart(kdj_dict[selected_stock], color=["#FFD700", "#1f77b4", "#FF4B4B"], height=300)
+        else:
+            st.warning("⚠️ 目前抓不到這個族群的資料，可能是 Yahoo Finance 暫時阻擋連線，請稍等幾分鐘後再重整頁面。")
