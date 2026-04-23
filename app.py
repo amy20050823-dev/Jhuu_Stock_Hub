@@ -70,7 +70,8 @@ def get_market_news():
 
 @st.cache_data(ttl=600)
 def get_indices():
-    indices_dict = {"加權指數": "^TWII", "那斯達克": "^IXIC", "費半指數": "^SOX", "VIX恐慌": "^VIX"}
+    # 這裡加上了 WTI原油 (CL=F)
+    indices_dict = {"加權指數": "^TWII", "那斯達克": "^IXIC", "費半指數": "^SOX", "VIX恐慌": "^VIX", "WTI原油": "CL=F"}
     res = {}
     for name, symbol in indices_dict.items():
         try:
@@ -99,7 +100,7 @@ def get_stock_advanced_data(stock_dict):
             ma20 = hist['Close'].rolling(20).mean().iloc[-1]
             if close > ma5 and close > ma20: trend = "📈 多頭"
             elif close < ma5 and close < ma20: trend = "📉 空頭"
-            else: trend = "🔄 整理"
+            else: trend = "整理"
 
             low_9 = hist['Low'].rolling(9).min()
             high_9 = hist['High'].rolling(9).max()
@@ -147,30 +148,29 @@ if st.sidebar.button("🔄 強制刷新所有數據"):
     st.session_state.ai_analysis_text = ""
     st.rerun()
 
-tab1, tab2 = st.tabs(["📈 首頁：大盤與題材熱度", "🎯 細部題材：技術面分析"])
+tab1, tab2 = st.tabs(["首頁：大盤與題材熱度", "技術面分析"])
 
 with tab1:
-    st.subheader("🌐 全球市場溫度計")
+    st.subheader("全球市場指數")
     indices_data = get_indices()
-    cols = st.columns(4)
+    # 這裡改成 5 欄來容納原油
+    cols = st.columns(5)
     for idx, (name, data) in enumerate(indices_data.items()):
         cols[idx].metric(label=name, value=data["現價"], delta=f"{data['漲跌幅']}%")
     
     st.markdown("---")
-    st.subheader("🤖 大盤與題材盤後分析")
+    st.subheader("大盤與題材盤後分析")
     
-    # 手動輸入的備案：如果你真的想自己打，可以在這裡輸入
-    manual_input = st.text_area("✍️ 如果 AI 一直掛掉，你可以直接在這裡手動輸入盤後日誌：", value=st.session_state.ai_analysis_text)
+    manual_input = st.text_area("手動輸入盤後日誌：", value=st.session_state.ai_analysis_text)
     if manual_input != st.session_state.ai_analysis_text:
         st.session_state.ai_analysis_text = manual_input
     
-    if st.button("✨ 呼叫 AI 產生最新盤後解析", use_container_width=True):
+    if st.button("呼叫 AI 產生最新盤後解析", use_container_width=True):
         if "GEMINI_API_KEY" not in st.secrets:
             st.error("⚠️ 請先在 Secrets 設定 GEMINI_API_KEY")
         else:
             with st.spinner("AI 正在撰寫分析中 (直接連線模式)..."):
                 try:
-                    # 準備給 AI 的資料
                     news_titles = get_market_news()
                     theme_summary = []
                     for theme, stocks in STOCK_DB.items():
@@ -181,7 +181,7 @@ with tab1:
                     
                     prompt = f"你是專業台股分析師。根據數據寫150字盤後分析。絕對禁止問候語與語助詞。大盤：{indices_data.get('加權指數',{}).get('漲跌幅',0)}%。強弱題材：{df_theme_ai.head(1)['題材'].values if not df_theme_ai.empty else '無'} / {df_theme_ai.tail(1)['題材'].values if not df_theme_ai.empty else '無'}。新聞：{news_titles[:10]}。分兩段：【大盤分析】、【資金流向】。"
                     
-                    # 🚀 終極殺手鐧：繞過 google-generativeai 套件，直接發送 HTTP 請求
+                    # 使用原始的 HTTP 請求繞過套件報錯
                     api_key = st.secrets["GEMINI_API_KEY"]
                     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
                     payload = {"contents": [{"parts": [{"text": prompt}]}]}
@@ -192,7 +192,7 @@ with tab1:
                     
                     if "candidates" in result_data:
                         st.session_state.ai_analysis_text = result_data["candidates"][0]["content"]["parts"][0]["text"]
-                        st.rerun() # 重新載入畫面以顯示結果
+                        st.rerun() 
                     else:
                         st.error(f"Google 伺服器回傳異常：{result_data}")
                         
@@ -224,7 +224,7 @@ with tab1:
                 if any(kw in n for kw in keywords):
                     st.error(f"🚨 觸發【{theme_name}】: {n}")
                     found = True
-        if not found: st.info("💡 目前無明顯題材觸發。")
+        if not found: st.info("目前無明顯題材觸發。")
 
 with tab2:
     selected_theme = st.sidebar.selectbox("請選擇要追蹤的盤面族群", list(STOCK_DB.keys()))
