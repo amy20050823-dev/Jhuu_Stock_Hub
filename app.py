@@ -93,7 +93,7 @@ def get_ai_market_analysis(indices_data, news_titles, theme_df):
         return "⚠️ 請先在 Streamlit Secrets 設定 GEMINI_API_KEY，AI 才能開始運作喔！"
     try:
         # 使用速度快且免費額度高的 flash 模型
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-pro')
         
         # 把今天的盤面數據打包成字串餵給 AI
         market_str = f"加權指數漲跌幅: {indices_data.get('加權指數', {}).get('漲跌幅', 0)}%\n"
