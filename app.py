@@ -165,7 +165,7 @@ with tab2:
             df_display = df.drop(columns=['漲跌幅數值']).set_index("代號")
             
             # 套用台股紅綠色系
-            styled_df = df_display.style.applymap(color_taiwan_stock, subset=['指標股', '多空趨勢', 'KD狀態'])
+            styled_df = df_display.style.map(color_taiwan_stock, subset=['指標股', '多空趨勢', 'KD狀態'])
             st.dataframe(styled_df, use_container_width=True)
         else:
             st.warning("目前無法抓取資料。")
