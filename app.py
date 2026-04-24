@@ -9,13 +9,10 @@ from deep_translator import GoogleTranslator
 st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
 
 # ================= 2. 📝 你的專屬大盤解析區 =================
-# 諠諠，你每天只要在這裡修改文字（包在三個引號裡面），網站就會自動更新！
 DAILY_ANALYSIS = """
-【今日大盤分析】
-今日加權指數受到美股科技股回檔影響，早盤開低走低，但盤中可見低接買盤進駐，顯示下檔支撐依然強韌。目前市場正在觀望即將公布的通膨數據與聯準會態度，整體大盤呈現量縮震盪的整理格局。
+從今日整體的盤面熱度來看，市場呈現極強的「AI 產業擴散效應」。資金不再只集中在單一龍頭股，而是由上游的 IP 矽智財、高速傳輸介面，延伸到中游的 PCB 載板與散熱管理。尤其 PCB/銅箔基板板塊漲幅超過 6%，顯示 AI 伺服器規格升級帶動的零組件需求是目前最具共識的進攻方向。相比之下，記憶體族群今日表現疲軟，顯示資金流向具有明確的選擇性，投資者應優先關注高頻高速與運算核心相關題材。
 
-【資金流向與籌碼觀察】
-從盤面資金流向來看，先前漲多的「CPO/光通訊」族群出現獲利了結賣壓。資金明顯轉入具備防禦屬性與低基期的「半導體耗材」與「網通/石英元件」族群。建議投資朋友近期操作不宜追高，可關注籌碼出現「爆量流入」且技術面站上月線的潛力標的。
+在籌碼動態方面，今日盤勢呈現「內外資一致看多」的罕見格局。三大法人合計買超金額突破 500 億元，其中外資單日大幅回補超過 430 億元，這通常被視為波段攻擊的起點。伴隨大盤成交量突破兆元天量，這顯示出強烈的換手動能與追價意願，盤勢結構由原先的震盪整理正式轉向多頭掌控，不過在量能極大化後，仍需留意短線正乖離過大的修正風險。
 """
 
 # ================= 3. 產業題材資料庫 =================
@@ -57,24 +54,36 @@ THEME_KEYWORDS = {
     "低軌衛星": ["低軌衛星", "SpaceX", "Satellite", "星鏈"]
 }
 
-# ================= 4. 核心抓取函數 =================
+# ================= 4. 核心抓取函數 (Google News RSS 不死版) =================
 @st.cache_data(ttl=1800)
 def get_market_news():
     news = []
     translator = GoogleTranslator(source='auto', target='zh-TW')
-    # 加上 headers 偽裝成瀏覽器，突破鉅亨網防爬蟲機制
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+    
+    # 1. 抓取國內台股新聞 (Google News RSS - 搜尋"台股 OR 股市")
     try:
-        soup = BeautifulSoup(requests.get("https://news.cnyes.com/news/cat/tw_stock", headers=headers, timeout=5).text, 'html.parser')
-        # 尋找所有 <a> 標籤內的新聞標題
-        news.extend([f"[國內] {t.get_text()}" for t in soup.select('a h3')[:20]])
+        url_tw = "https://news.google.com/rss/search?q=台股+OR+股市&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
+        res_tw = requests.get(url_tw, timeout=5)
+        soup_tw = BeautifulSoup(res_tw.text, 'xml')
+        items_tw = soup_tw.find_all('item')[:20]
+        # 把新聞標題後面的 "- 媒體名稱" 去掉，畫面比較乾淨
+        news.extend([f"[國內] {item.title.text.split(' - ')[0]}" for item in items_tw])
     except: pass
+    
+    # 2. 抓取國際美股新聞 (Google News RSS - 搜尋"US stock market")
     try:
-        soup = BeautifulSoup(requests.get("https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114", timeout=5).text, 'xml')
-        for item in soup.find_all('item')[:15]:
-            try: news.append(f"[國際] {translator.translate(item.title.text)}")
+        url_us = "https://news.google.com/rss/search?q=US+stock+market&hl=en-US&gl=US&ceid=US:en"
+        res_us = requests.get(url_us, timeout=5)
+        soup_us = BeautifulSoup(res_us.text, 'xml')
+        items_us = soup_us.find_all('item')[:10]
+        for item in items_us:
+            try: 
+                clean_title = item.title.text.split(' - ')[0]
+                translated_title = translator.translate(clean_title)
+                news.append(f"[國際] {translated_title}")
             except: pass
     except: pass
+    
     return news
 
 @st.cache_data(ttl=600)
@@ -104,14 +113,12 @@ def get_stock_advanced_data(stock_dict):
             close, prev_close = hist['Close'].iloc[-1], hist['Close'].iloc[-2]
             change_pct = ((close - prev_close) / prev_close) * 100
             
-            # 多空趨勢 (5日線與20日線)
             ma5 = hist['Close'].rolling(5).mean().iloc[-1]
             ma20 = hist['Close'].rolling(20).mean().iloc[-1]
             if close > ma5 and close > ma20: trend = "📈 多頭"
             elif close < ma5 and close < ma20: trend = "📉 空頭"
             else: trend = "🔄 整理"
             
-            # 新增籌碼追蹤：爆量動能判斷 (今日成交量 vs 5日均量)
             vol_today = hist['Volume'].iloc[-1]
             vol_ma5 = hist['Volume'].rolling(5).mean().iloc[-1]
             if vol_today > vol_ma5 * 1.5:
@@ -121,7 +128,6 @@ def get_stock_advanced_data(stock_dict):
             else:
                 chip_status = "➡️ 量能平穩"
 
-            # KDJ 計算
             low_9 = hist['Low'].rolling(9).min()
             high_9 = hist['High'].rolling(9).max()
             rsv = (hist['Close'] - low_9) / (high_9 - low_9) * 100
@@ -146,7 +152,7 @@ def get_stock_advanced_data(stock_dict):
                 "漲跌數值": change_pct, 
                 "現價": round(close, 2), 
                 "多空趨勢": trend,
-                "籌碼動能": chip_status,  # 新增的籌碼欄位
+                "籌碼動能": chip_status, 
                 "近四季EPS": eps_str
             })
         except:
@@ -178,7 +184,6 @@ with tab1:
         cols[idx].metric(label=name, value=data["現價"], delta=f"{data['漲跌幅']}%")
     
     st.markdown("---")
-    # 這裡顯示你自己寫的專屬分析，使用者看到的會是完美的文字方塊
     st.subheader("👨‍💻 大盤與題材盤後分析")
     st.info(DAILY_ANALYSIS)
                     
@@ -201,12 +206,18 @@ with tab1:
     with col_r:
         st.subheader("📰 題材觸發雷達")
         news_list = get_market_news()
+        
+        # 顯示最新新聞清單（折疊起來讓畫面乾淨）
+        with st.expander("📝 點擊查看今日最新國內外股市新聞"):
+            for n in news_list:
+                st.write(n)
+                
         found = False
+        st.markdown("### 🚨 盤面關鍵字警報")
         for n in news_list:
             for theme_name, keywords in THEME_KEYWORDS.items():
-                # 改成不分大小寫比對，抓得更精準
                 if any(kw.lower() in n.lower() for kw in keywords):
-                    st.error(f"🚨 觸發【{theme_name}】: {n}")
+                    st.error(f"觸發【{theme_name}】: {n}")
                     found = True
         if not found: st.info("💡 目前盤面新聞較為雜亂，未偵測到系統設定之核心題材發酵。")
 
