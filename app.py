@@ -119,7 +119,7 @@ st.title("台股題材動態觀測站")
 # --- 側邊欄：個人介紹置頂 ---
 st.sidebar.header("📻 關於Jhuu")
 st.sidebar.write("若想了解更多關於股市分析邊學英文可以收聽我的podcast")
-st.sidebar.markdown("[👉 點我收聽](https://你的podcast連結.com)")
+st.sidebar.markdown("[👉 點我收聽](https://podcasts.apple.com/us/podcast/%E5%B8%B6%E4%BD%A0%E5%8D%81%E5%88%86%E9%90%98%E4%BA%86%E8%A7%A3%E8%82%A1%E5%B8%82/id1895272257")
 st.sidebar.markdown("---")
 
 # --- 主畫面 ---
