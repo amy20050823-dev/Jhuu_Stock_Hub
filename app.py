@@ -32,7 +32,7 @@ STOCK_DB = {
     "🛰️ 低軌衛星": {"2313": "華通", "3491": "昇達科", "6271": "同欣電", "3380": "明泰"}
 }
 
-# ================= 4. 核心抓取函數 (極簡瘦身版) =================
+# ================= 4. 核心抓取函數 =================
 @st.cache_data(ttl=600)
 def get_indices():
     indices_dict = {"加權指數": "^TWII", "那斯達克": "^IXIC", "費半指數": "^SOX", "VIX恐慌": "^VIX", "WTI原油": "CL=F"}
@@ -119,7 +119,8 @@ st.title("台股題材動態觀測站")
 # --- 側邊欄：個人介紹置頂 ---
 st.sidebar.header("📻 關於Jhuu")
 st.sidebar.write("若想了解更多關於股市分析邊學英文可以收聽我的podcast")
-st.sidebar.markdown("[👉 點我收聽](https://podcasts.apple.com/us/podcast/%E5%B8%B6%E4%BD%A0%E5%8D%81%E5%88%86%E9%90%98%E4%BA%86%E8%A7%A3%E8%82%A1%E5%B8%82/id1895272257")
+# 幫你把你的 Apple Podcast 連結完美包裝在裡面了，保證不斷行！
+st.sidebar.markdown("[👉 點我收聽](https://podcasts.apple.com/us/podcast/%E5%B8%B6%E4%BD%A0%E5%8D%81%E5%88%86%E9%90%98%E4%BA%86%E8%A7%A3%E8%82%A1%E5%B8%82/id1895272257)")
 st.sidebar.markdown("---")
 
 # --- 主畫面 ---
@@ -151,7 +152,6 @@ with tab1:
             st.warning("暫時無法抓取盤面資料，請點擊左側『強制刷新』。")
 
 with tab2:
-    # 這裡的下拉選單會自動排在側邊欄的中間（在關於我之下，刷新按鈕之上）
     selected_theme = st.sidebar.selectbox("請選擇要追蹤的盤面族群", list(STOCK_DB.keys()))
     st.subheader(f"{selected_theme} - 技術與籌碼分析")
     
