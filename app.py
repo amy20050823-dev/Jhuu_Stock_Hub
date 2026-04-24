@@ -7,7 +7,6 @@ st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
 
 # ================= 2. 📝 你的專屬大盤解析區 =================
 DAILY_ANALYSIS = """
-【今日大盤分析】
 從今日整體的盤面熱度來看，市場呈現極強的「AI 產業擴散效應」。資金不再只集中在單一龍頭股，而是由上游的 IP 矽智財、高速傳輸介面，延伸到中游的 PCB 載板與散熱管理。尤其 PCB/銅箔基板板塊漲幅超過 6%，顯示 AI 伺服器規格升級帶動的零組件需求是目前最具共識的進攻方向。相比之下，記憶體族群今日表現疲軟，顯示資金流向具有明確的選擇性，投資者應優先關注高頻高速與運算核心相關題材。
 
 在籌碼動態方面，今日盤勢呈現「內外資一致看多」的罕見格局。三大法人合計買超金額突破 500 億元，其中外資單日大幅回補超過 430 億元，這通常被視為波段攻擊的起點。伴隨大盤成交量突破兆元天量，這顯示出強烈的換手動能與追價意願，盤勢結構由原先的震盪整理正式轉向多頭掌控，不過在量能極大化後，仍需留意短線正乖離過大的修正風險。
@@ -117,22 +116,11 @@ def color_taiwan_stock(val):
 # ================= 5. UI 視覺化與介面 =================
 st.title("台股題材動態觀測站")
 
-# --- 側邊欄：控制台與個人介紹 ---
-st.sidebar.header("系統控制")
-if st.sidebar.button("強制刷新所有數據"):
-    st.cache_data.clear()
-    st.rerun()
-
+# --- 側邊欄：個人介紹置頂 ---
+st.sidebar.header("📻 關於Jhuu")
+st.sidebar.write("若想了解更多關於股市分析邊學英文可以收聽我的podcast")
+st.sidebar.markdown("[👉 點我收聽](https://你的podcast連結.com)")
 st.sidebar.markdown("---")
-st.sidebar.header("📻 關於站長")
-st.sidebar.write("**Jhu-Shyuan (諠諠)**")
-st.sidebar.write("結合商業邏輯與數據實作，在這裡分享我對盤面的觀察。")
-
-# 這裡可以放你的 Podcast 連結
-st.sidebar.markdown("[👉 點我收聽我的財經英文 Podcast](https://你的podcast連結.com)")
-# 如果有 YouTube 或是短影音頻道也可以放
-st.sidebar.markdown("[👉 我的社群與短影音](https://你的IG或YT連結.com)")
-
 
 # --- 主畫面 ---
 tab1, tab2 = st.tabs(["首頁：大盤與題材熱度", "細部題材：技術面與籌碼"])
@@ -158,12 +146,12 @@ with tab1:
                 theme_summary.append({"題材名稱": theme, "平均漲跌幅(%)": round(df_t["漲跌數值"].mean(), 2)})
         if theme_summary:
             sdf = pd.DataFrame(theme_summary).sort_values("平均漲跌幅(%)", ascending=False)
-            # 讓表格寬度展開，畫面看起來更大器
             st.dataframe(sdf, column_config={"平均漲跌幅(%)": st.column_config.ProgressColumn("平均漲跌幅(%)", min_value=-10, max_value=10, format="%.2f %%")}, use_container_width=True, hide_index=True)
         else:
             st.warning("暫時無法抓取盤面資料，請點擊左側『強制刷新』。")
 
 with tab2:
+    # 這裡的下拉選單會自動排在側邊欄的中間（在關於我之下，刷新按鈕之上）
     selected_theme = st.sidebar.selectbox("請選擇要追蹤的盤面族群", list(STOCK_DB.keys()))
     st.subheader(f"{selected_theme} - 技術與籌碼分析")
     
@@ -182,3 +170,9 @@ with tab2:
         else:
             st.warning("暫時無法取得該族群資料。原因可能是 Yahoo Finance 阻擋連線。")
             st.info("提示：請點擊左側「強制刷新所有數據」按鈕重試。")
+
+# --- 側邊欄：系統控制移到最下方 ---
+st.sidebar.markdown("---")
+if st.sidebar.button("強制刷新所有數據"):
+    st.cache_data.clear()
+    st.rerun()
