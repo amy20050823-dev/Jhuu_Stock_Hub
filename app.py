@@ -1,23 +1,20 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import requests
-from bs4 import BeautifulSoup
-from deep_translator import GoogleTranslator
 
 # ================= 1. 網頁配置 =================
 st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
 
-# ================= 2. 你的專屬大盤解析區 =================
+# ================= 2. 📝 你的專屬大盤解析區 =================
 DAILY_ANALYSIS = """
 【今日大盤分析】
-從今日整體的盤面熱度來看，市場呈現極強的「AI 產業擴散效應」。資金不再只集中在單一龍頭股，而是由上游的 IP 矽智財、高速傳輸介面，延伸到中游的 PCB 載板與散熱管理。尤其 PCB/銅箔基板板塊漲幅超過 6%，顯示 AI 伺服器規格升級帶動的零組件需求是目前最具共識的進攻方向。相比之下，記憶體族群今日表現疲軟，顯示資金流向具有明確的選擇性，投資者應優先關注高頻高速與運算核心相關題材。
+今日加權指數受到美股科技股回檔影響，早盤開低走低，但盤中可見低接買盤進駐，顯示下檔支撐依然強韌。目前市場正在觀望即將公布的通膨數據與聯準會態度，整體大盤呈現量縮震盪的整理格局。
 
-在籌碼動態方面，今日盤勢呈現「內外資一致看多」的罕見格局。三大法人合計買超金額突破 500 億元，其中外資單日大幅回補超過 430 億元，這通常被視為波段攻擊的起點。伴隨大盤成交量突破兆元天量，這顯示出強烈的換手動能與追價意願，盤勢結構由原先的震盪整理正式轉向多頭掌控，不過在量能極大化後，仍需留意短線正乖離過大的修正風險。
+【資金流向與籌碼觀察】
+從盤面資金流向來看，先前漲多的「CPO/光通訊」族群出現獲利了結賣壓。資金明顯轉入具備防禦屬性與低基期的「半導體耗材」與「網通/石英元件」族群。建議投資朋友近期操作不宜追高，可關注籌碼出現「爆量流入」且技術面站上月線的潛力標的。
 """
 
 # ================= 3. 產業題材資料庫 =================
-# 保留類股本身的表情符號，方便辨識
 STOCK_DB = {
     "🤖 輝達GTC/伺服器": {"2330": "台積電", "2317": "鴻海", "2382": "廣達", "3231": "緯創", "2376": "技嘉", "6669": "緯穎", "3706": "神達"},
     "✨ CPO/光通訊": {"4979": "華星光", "3450": "聯鈞", "3081": "聯亞", "3363": "上詮", "6442": "光聖", "6451": "訊芯-KY", "3163": "波若威"},
@@ -37,63 +34,7 @@ STOCK_DB = {
     "🛰️ 低軌衛星": {"2313": "華通", "3491": "昇達科", "6271": "同欣電", "3380": "明泰"}
 }
 
-THEME_KEYWORDS = {
-    "輝達GTC/伺服器": ["輝達", "NVIDIA", "伺服器", "GB200", "AI"],
-    "CPO/光通訊": ["CPO", "光通訊", "矽光子"],
-    "PCB/銅箔基板": ["PCB", "銅箔基板", "CCL"],
-    "網通/石英元件": ["網通", "石英", "WiFi 7"],
-    "記憶體": ["記憶體", "DRAM", "HBM", "Micron", "美光"],
-    "散熱管理": ["散熱", "液冷", "水冷", "CDU", "Cold Plate"],
-    "電源供應器": ["電源供應器", "UPS", "逆變器", "電源"],
-    "BBU(備援電池)": ["BBU", "備援電池", "電池模組"],
-    "被動元件": ["被動元件", "MLCC", "電容", "電感"],
-    "ASIC/IP矽智財": ["ASIC", "矽智財", "IP", "客製化晶片", "RISC-V"],
-    "高速傳輸與介面": ["高速傳輸", "USB 4", "PCIe", "傳輸介面"],
-    "CoWoS/先進封裝": ["CoWoS", "先進封裝", "封測", "台積電設備"],
-    "半導體耗材與檢測": ["探針卡", "測試探針", "再生晶圓", "濕製程", "半導體檢測"],
-    "邊緣運算與MCU": ["邊緣運算", "Edge AI", "MCU", "微控制器"],
-    "AI機器人/自動化": ["機器人", "自動化", "所羅門", "無人機", "自動"],
-    "低軌衛星": ["低軌衛星", "SpaceX", "Satellite", "星鏈"]
-}
-
-# ================= 4. 核心抓取函數 =================
-@st.cache_data(ttl=1800)
-def get_market_news():
-    news = []
-    translator = GoogleTranslator(source='auto', target='zh-TW')
-    
-    # 抓取國內台股新聞 (加上 status_code 檢查與防錯)
-    try:
-        url_tw = "https://news.google.com/rss/search?q=台股+OR+股市&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
-        res_tw = requests.get(url_tw, timeout=5)
-        if res_tw.status_code == 200:
-            soup_tw = BeautifulSoup(res_tw.text, 'xml')
-            for item in soup_tw.find_all('item')[:20]:
-                title = item.title.text.split(' - ')[0]
-                link = item.link.text
-                if "Error 500" not in title and "Server Error" not in title:
-                    news.append({"title": f"[國內] {title}", "link": link})
-    except: pass
-    
-    # 抓取國際美股新聞
-    try:
-        url_us = "https://news.google.com/rss/search?q=US+stock+market&hl=en-US&gl=US&ceid=US:en"
-        res_us = requests.get(url_us, timeout=5)
-        if res_us.status_code == 200:
-            soup_us = BeautifulSoup(res_us.text, 'xml')
-            for item in soup_us.find_all('item')[:10]:
-                raw_title = item.title.text.split(' - ')[0]
-                if "Error 500" not in raw_title and "Server Error" not in raw_title:
-                    link = item.link.text
-                    try:
-                        translated_title = translator.translate(raw_title)
-                        news.append({"title": f"[國際] {translated_title}", "link": link})
-                    except:
-                        news.append({"title": f"[國際] {raw_title}", "link": link})
-    except: pass
-    
-    return news
-
+# ================= 4. 核心抓取函數 (極簡瘦身版) =================
 @st.cache_data(ttl=600)
 def get_indices():
     indices_dict = {"加權指數": "^TWII", "那斯達克": "^IXIC", "費半指數": "^SOX", "VIX恐慌": "^VIX", "WTI原油": "CL=F"}
@@ -121,14 +62,12 @@ def get_stock_advanced_data(stock_dict):
             close, prev_close = hist['Close'].iloc[-1], hist['Close'].iloc[-2]
             change_pct = ((close - prev_close) / prev_close) * 100
             
-            # 多空趨勢 (拔除表情符號)
             ma5 = hist['Close'].rolling(5).mean().iloc[-1]
             ma20 = hist['Close'].rolling(20).mean().iloc[-1]
             if close > ma5 and close > ma20: trend = "多頭"
             elif close < ma5 and close < ma20: trend = "空頭"
             else: trend = "整理"
             
-            # 籌碼動能 (拔除表情符號)
             vol_today = hist['Volume'].iloc[-1]
             vol_ma5 = hist['Volume'].rolling(5).mean().iloc[-1]
             if vol_today > vol_ma5 * 1.5:
@@ -170,21 +109,33 @@ def get_stock_advanced_data(stock_dict):
             
     return pd.DataFrame(data_list), kdj_history_dict
 
-# ================= 5. UI 視覺化與介面 =================
-# 更新顏色判斷邏輯，因為表情符號被拔除了
 def color_taiwan_stock(val):
     if isinstance(val, (int, float)): return ''
     if "(+" in val or "多頭" in val or "爆量流入" in val: return 'color: #ff4b4b; font-weight: bold;'
     if "(-" in val or "空頭" in val or "量縮觀望" in val: return 'color: #00cc96; font-weight: bold;'
     return ''
 
+# ================= 5. UI 視覺化與介面 =================
 st.title("台股題材動態觀測站")
 
+# --- 側邊欄：控制台與個人介紹 ---
 st.sidebar.header("系統控制")
 if st.sidebar.button("強制刷新所有數據"):
     st.cache_data.clear()
     st.rerun()
 
+st.sidebar.markdown("---")
+st.sidebar.header("📻 關於站長")
+st.sidebar.write("**Jhu-Shyuan (諠諠)**")
+st.sidebar.write("結合商業邏輯與數據實作，在這裡分享我對盤面的觀察。")
+
+# 這裡可以放你的 Podcast 連結
+st.sidebar.markdown("[👉 點我收聽我的財經英文 Podcast](https://你的podcast連結.com)")
+# 如果有 YouTube 或是短影音頻道也可以放
+st.sidebar.markdown("[👉 我的社群與短影音](https://你的IG或YT連結.com)")
+
+
+# --- 主畫面 ---
 tab1, tab2 = st.tabs(["首頁：大盤與題材熱度", "細部題材：技術面與籌碼"])
 
 with tab1:
@@ -199,38 +150,19 @@ with tab1:
     st.info(DAILY_ANALYSIS)
                     
     st.markdown("---")
-    col_l, col_r = st.columns([1, 1])
-    with col_l:
-        st.subheader("今日題材熱度排行")
-        with st.spinner("計算題材熱度中..."):
-            theme_summary = []
-            for theme, stocks in STOCK_DB.items():
-                df_t, _ = get_stock_advanced_data(stocks)
-                if not df_t.empty:
-                    theme_summary.append({"題材名稱": theme, "平均漲跌幅(%)": round(df_t["漲跌數值"].mean(), 2)})
-            if theme_summary:
-                sdf = pd.DataFrame(theme_summary).sort_values("平均漲跌幅(%)", ascending=False)
-                st.dataframe(sdf, column_config={"平均漲跌幅(%)": st.column_config.ProgressColumn("平均漲跌幅(%)", min_value=-10, max_value=10, format="%.2f %%")}, use_container_width=True, hide_index=True)
-            else:
-                st.warning("暫時無法抓取盤面資料，請點擊左側『強制刷新』。")
-                
-    with col_r:
-        st.subheader("題材觸發雷達")
-        news_list = get_market_news()
-        
-        # 顯示最新新聞清單（改為超連結形式）
-        with st.expander("點擊查看今日最新國內外股市新聞"):
-            for n in news_list:
-                st.markdown(f"- [{n['title']}]({n['link']})")
-                
-        found = False
-        st.markdown("### 盤面關鍵字警報")
-        for n in news_list:
-            for theme_name, keywords in THEME_KEYWORDS.items():
-                if any(kw.lower() in n['title'].lower() for kw in keywords):
-                    st.error(f"觸發【{theme_name}】: {n['title']}")
-                    found = True
-        if not found: st.info("目前盤面新聞較為雜亂，未偵測到系統設定之核心題材發酵。")
+    st.subheader("今日題材熱度排行")
+    with st.spinner("計算題材熱度中..."):
+        theme_summary = []
+        for theme, stocks in STOCK_DB.items():
+            df_t, _ = get_stock_advanced_data(stocks)
+            if not df_t.empty:
+                theme_summary.append({"題材名稱": theme, "平均漲跌幅(%)": round(df_t["漲跌數值"].mean(), 2)})
+        if theme_summary:
+            sdf = pd.DataFrame(theme_summary).sort_values("平均漲跌幅(%)", ascending=False)
+            # 讓表格寬度展開，畫面看起來更大器
+            st.dataframe(sdf, column_config={"平均漲跌幅(%)": st.column_config.ProgressColumn("平均漲跌幅(%)", min_value=-10, max_value=10, format="%.2f %%")}, use_container_width=True, hide_index=True)
+        else:
+            st.warning("暫時無法抓取盤面資料，請點擊左側『強制刷新』。")
 
 with tab2:
     selected_theme = st.sidebar.selectbox("請選擇要追蹤的盤面族群", list(STOCK_DB.keys()))
