@@ -55,9 +55,19 @@ def get_stock_advanced_data(stock_dict):
     kdj_history_dict = {}
     for symbol, name in stock_dict.items():
         try:
-            t = yf.Ticker(f"{symbol}.TW")
-            hist = t.history(period="3mo")
-            if len(hist) < 20: continue
+            # 🚀 智慧雙通道：先找上市(.TW)，找不到就找上櫃(.TWO)
+            t = None
+            hist = pd.DataFrame()
+            for suffix in [".TW", ".TWO"]:
+                temp_t = yf.Ticker(f"{symbol}{suffix}")
+                temp_hist = temp_t.history(period="3mo")
+                if len(temp_hist) >= 20:
+                    t = temp_t
+                    hist = temp_hist
+                    break
+            
+            if hist.empty or len(hist) < 20:
+                continue
             
             close, prev_close = hist['Close'].iloc[-1], hist['Close'].iloc[-2]
             change_pct = ((close - prev_close) / prev_close) * 100
@@ -118,11 +128,13 @@ def color_taiwan_stock(val):
 # ================= 5. UI 視覺化與介面 =================
 st.title("台股題材動態觀測站")
 
-st.sidebar.header("系統控制")
-if st.sidebar.button("強制刷新所有數據"):
-    st.cache_data.clear()
-    st.rerun()
+# --- 側邊欄：個人介紹置頂 ---
+st.sidebar.header("📻 關於Jhuu")
+st.sidebar.write("若想了解更多關於股市分析邊學英文可以收聽我的podcast")
+st.sidebar.markdown("[👉 點我收聽](https://podcasts.apple.com/us/podcast/%E5%B8%B6%E4%BD%A0%E5%8D%81%E5%88%86%E9%90%98%E4%BA%86%E8%A7%A3%E8%82%A1%E5%B8%82/id1895272257)")
+st.sidebar.markdown("---")
 
+# --- 主畫面 ---
 tab1, tab2 = st.tabs(["首頁：大盤與題材熱度", "細部題材：技術面與籌碼"])
 
 with tab1:
@@ -169,3 +181,9 @@ with tab2:
         else:
             st.warning("暫時無法取得該族群資料。原因可能是 Yahoo Finance 阻擋連線。")
             st.info("提示：請點擊左側「強制刷新所有數據」按鈕重試。")
+
+# --- 側邊欄：系統控制移到最下方 ---
+st.sidebar.markdown("---")
+if st.sidebar.button("強制刷新所有數據"):
+    st.cache_data.clear()
+    st.rerun()
