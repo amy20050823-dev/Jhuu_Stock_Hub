@@ -194,7 +194,6 @@ st.title("台股題材動態觀測站 🚀")
 
 # --- 側邊欄：個人介紹置頂 ---
 st.sidebar.header("📻 關於 Jhuu")
-st.sidebar.write("結合商業邏輯與數據實作，在這裡分享我對盤面的觀察。")
 st.sidebar.markdown("---")
 
 # --- 主畫面 ---
