@@ -6,7 +6,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import requests
 from bs4 import BeautifulSoup
-from deep_translator import GoogleTranslator
 
 # ================= 1. 網頁配置 =================
 st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
@@ -18,11 +17,11 @@ DAILY_ANALYSIS = """
 建議觀察：1. 是否有新題材在新聞中頻繁出現？ 2. 個股突破布林上緣且爆量時的「超級進場點」。
 """
 
-# ================= 3. 產業題材與龍頭資料庫 =================
+# ================= 3. 產業題材與龍頭資料庫 (擴大升級版) =================
 STOCK_DB = {
     "輝達GTC/伺服器": {"2330": "台積電", "2317": "鴻海", "2382": "廣達", "3231": "緯創", "2376": "技嘉", "6669": "緯穎", "3706": "神達"},
     "CPO/光通訊": {"4979": "華星光", "3450": "聯鈞", "3081": "聯亞", "3363": "上詮", "6442": "光聖", "6451": "訊芯-KY", "3163": "波若威"},
-    "PCB/銅箔基板": {"2383": "台光電", "6213": "聯茂", "6274": "台燿", "2368": "金像電", "3037": "欣興", "8046": "南電", "3189": "景碩", "2313": "華通"},
+    "PCB/銅箔基板": {"2383": "台光電", "6213": "聯茂", "6274": "台燿", "2368": "金像電", "2313": "華通"}, # 欣興、南電、景碩移至 ABF
     "網通/石英元件": {"3042": "晶技", "3221": "台嘉碩", "8182": "加高", "2484": "希華"},
     "記憶體": {"2408": "南亞科", "2344": "華邦電", "8299": "群聯", "3260": "威剛"},
     "散熱管理": {"3017": "奇鋐", "3324": "雙鴻", "2421": "建準", "6230": "超眾", "8996": "高力"},
@@ -31,11 +30,17 @@ STOCK_DB = {
     "被動元件": {"2327": "國巨", "2492": "華新科", "3026": "禾伸堂"},
     "ASIC/IP矽智財": {"3443": "智原", "3661": "世芯-KY", "6643": "M31", "6533": "晶心科"},
     "高速傳輸與介面": {"4966": "譜瑞-KY", "5269": "祥碩", "6756": "威鋒電子", "6661": "威健"},
-    "CoWoS/先進封裝": {"3131": "弘塑", "6187": "萬潤", "5443": "均豪", "6640": "均华", "6196": "帆宣"},
-    "半導體耗材與檢測": {"6223": "旺矽", "6217": "中探針", "1560": "研伸", "1773": "勝一", "3583": "辛耘"},
+    "CoWoS/先進封裝": {"3131": "弘塑", "6187": "萬潤", "5443": "均豪", "6640": "均華", "6196": "帆宣"},
+    "半導體耗材與檢測": {"6223": "旺矽", "6217": "中探針", "1560": "研伸", "3583": "辛耘"}, # 勝一移至化學材料
     "邊緣運算與MCU": {"2454": "聯發科", "4919": "盛群", "2337": "旺宏"},
     "AI機器人/自動化": {"2359": "所羅門", "2365": "昆盈", "6414": "樺漢", "8374": "羅昇", "4510": "高鋒"},
-    "低軌衛星": {"2313": "華通", "3491": "昇達科", "6271": "同欣電", "3380": "明泰"}
+    "低軌衛星": {"2313": "華通", "3491": "昇達科", "6271": "同欣電", "3380": "明泰"},
+    "重電與能源轉型": {"1513": "中興電", "1519": "華城", "1503": "士電", "1514": "亞力", "1605": "華新"},
+    "半導體化學與材料": {"4755": "三福化", "4770": "崇越", "1773": "勝一", "3010": "華立"},
+    "廠務工程與無塵室": {"2404": "漢唐", "3402": "漢科", "6139": "亞翔", "5536": "聖暉*"},
+    "AI PC與工業電腦": {"2357": "華碩", "2353": "宏碁", "2395": "研華", "6245": "立端"},
+    "資料中心連接線材": {"6653": "嘉基", "3665": "貿聯-KY", "3023": "信邦"},
+    "ABF載板/先進基板": {"3037": "欣興", "8046": "南電", "3189": "景碩", "8050": "廣積"}
 }
 
 SYMBOL_TO_THEME = {}
@@ -43,7 +48,7 @@ for theme_full, stocks in STOCK_DB.items():
     for sym in stocks:
         SYMBOL_TO_THEME[sym] = theme_full
 
-LEADERS = ["2330", "2317", "3450", "4979", "3037", "2383", "3017", "2308", "2327", "2454", "3661"]
+LEADERS = ["2330", "2317", "3450", "4979", "3037", "2383", "3017", "2308", "2327", "2454", "3661", "1519"]
 
 # ================= 4. 核心抓取與策略函數 =================
 @st.cache_data(ttl=1800)
@@ -82,7 +87,6 @@ def get_stock_advanced_data(stock_dict):
         try:
             t = None
             hist = pd.DataFrame()
-            # 改為 4 個月，減輕載入負擔，同時確保 60MA 算得出來
             for suffix in [".TW", ".TWO"]:
                 temp_t = yf.Ticker(f"{symbol}{suffix}")
                 temp_hist = temp_t.history(period="4mo")
@@ -124,7 +128,7 @@ def get_stock_advanced_data(stock_dict):
             action = "⚪ 盤整觀望"
             action_prio = 99
             
-            # 策略核心
+            # 策略核心邏輯
             if k_s.iloc[-1] > 80 and close < hist['MA5'].iloc[-1]: action, action_prio = "💸 獲利了結", 6
             elif close < hist['MA20'].iloc[-1]: 
                 if close < hist['MA60'].iloc[-1] or vol_today < vol_ma5 * 0.7: action, action_prio = "🛑 賣出停損", 5
@@ -186,9 +190,21 @@ def color_pct(val):
 # ================= 5. UI 介面 =================
 st.title("台股題材動態觀測站")
 
-# 側邊欄精簡化
+# 側邊欄：族群追蹤在上，持股在下
 st.sidebar.header("盤面族群追蹤")
 sel_theme = st.sidebar.selectbox("請選擇族群", list(STOCK_DB.keys()))
+
+st.sidebar.markdown("---")
+# 💼 復活的持股輸入框
+st.sidebar.header("💼 我的持股追蹤")
+my_holdings_input = st.sidebar.text_input("輸入股票代號 (用逗號分隔，如: 2330, 2317)", "")
+my_holdings_dict = {}
+if my_holdings_input:
+    for s in my_holdings_input.split(','):
+        s = s.strip()
+        if s:
+            my_holdings_dict[s] = f"持股 {s}"
+
 st.sidebar.markdown("---")
 if st.sidebar.button("強制刷新"):
     st.cache_data.clear()
@@ -215,7 +231,7 @@ with tab1:
             if theme_res:
                 st.dataframe(pd.DataFrame(theme_res).sort_values("漲跌(%)", ascending=False), height=300, use_container_width=True, hide_index=True)
             else:
-                st.error("⚠️ Yahoo Finance 暫時阻擋了連線，請過幾分鐘後再點擊左側『強制刷新』。")
+                st.error("⚠️ Yahoo Finance 暫時阻擋了連線，請過幾分鐘後再重試。")
             
     with col_r:
         st.subheader("題材偵察機 (盤面新聞)")
@@ -245,12 +261,31 @@ with tab3:
         df_a, hist_a = get_stock_advanced_data(all_flat)
         
         if not df_a.empty:
-            st.markdown("### 今日潛在爆發黑馬")
-            df_potential = df_a[df_a['黑馬潛力'] != "-"]
-            if not df_potential.empty:
-                st.dataframe(df_potential[['所屬題材', '指標股', '漲跌幅(%)', '現價', '波段策略', '黑馬潛力', '籌碼動能']].reset_index(drop=True).style.map(color_strategy, subset=['波段策略', '黑馬潛力']).map(color_pct, subset=['漲跌幅(%)']), use_container_width=True)
+            # 💡 判斷：如果有輸入持股，才顯示持股區塊，沒有的話就只顯示黑馬股，不佔空間
+            if my_holdings_dict:
+                col_t1, col_t2 = st.columns(2)
+                with col_t1:
+                    st.markdown("### 💼 我的持股健檢")
+                    df_my, _ = get_stock_advanced_data(my_holdings_dict)
+                    if not df_my.empty:
+                        st.dataframe(df_my[['指標股', '漲跌幅(%)', '現價', '波段策略', '籌碼動能']].style.map(color_strategy, subset=['波段策略']).map(color_pct, subset=['漲跌幅(%)']), height=200, use_container_width=True)
+                    else:
+                        st.warning("找不到輸入的股票資料。")
+                with col_t2:
+                    st.markdown("### 🐎 今日潛在爆發黑馬")
+                    df_potential = df_a[df_a['黑馬潛力'] != "-"]
+                    if not df_potential.empty:
+                        st.dataframe(df_potential[['所屬題材', '指標股', '漲跌幅(%)', '現價', '波段策略', '黑馬潛力', '籌碼動能']].reset_index(drop=True).style.map(color_strategy, subset=['波段策略', '黑馬潛力']).map(color_pct, subset=['漲跌幅(%)']), height=200, use_container_width=True)
+                    else:
+                        st.info("今日無符合布林極度壓縮且主力吃貨的黑馬股。")
             else:
-                st.info("今日無符合布林極度壓縮且主力吃貨的黑馬股。")
+                # 沒輸入持股時，黑馬區塊展開獨佔版面
+                st.markdown("### 🐎 今日潛在爆發黑馬")
+                df_potential = df_a[df_a['黑馬潛力'] != "-"]
+                if not df_potential.empty:
+                    st.dataframe(df_potential[['所屬題材', '指標股', '漲跌幅(%)', '現價', '波段策略', '黑馬潛力', '籌碼動能']].reset_index(drop=True).style.map(color_strategy, subset=['波段策略', '黑馬潛力']).map(color_pct, subset=['漲跌幅(%)']), height=200, use_container_width=True)
+                else:
+                    st.info("今日無符合布林極度壓縮且主力吃貨的黑馬股。")
 
             st.markdown("---")
             st.markdown("### 全市場波段選股總表")
