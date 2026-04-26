@@ -2,9 +2,10 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go # 新增畫 K 線圖的套件
+import plotly.graph_objects as go
 
 # ================= 1. 網頁配置 =================
+# layout="wide" 讓畫面可以往左右延展，是橫向排版的關鍵
 st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
 
 # ================= 2. 你的專屬大盤解析區 =================
@@ -62,12 +63,13 @@ def get_indices():
 @st.cache_data(ttl=600)
 def get_stock_advanced_data(stock_dict):
     data_list = []
-    price_history_dict = {} # 改為儲存歷史 K 線資料
+    price_history_dict = {} 
     
     for symbol, name in stock_dict.items():
         try:
             t = None
             hist = pd.DataFrame()
+            # 抓取 6 個月確保 60MA 算得出來
             for suffix in [".TW", ".TWO"]:
                 temp_t = yf.Ticker(f"{symbol}{suffix}")
                 temp_hist = temp_t.history(period="6mo")
@@ -87,10 +89,23 @@ def get_stock_advanced_data(stock_dict):
             prev_close = hist['Close'].iloc[-2]
             change_pct = ((close - prev_close) / prev_close) * 100
             
-            ma5 = hist['Close'].rolling(5).mean().iloc[-1]
-            ma20 = hist['Close'].rolling(20).mean().iloc[-1]
-            ma60 = hist['Close'].rolling(60).mean().iloc[-1]
+            # --- 均線與布林通道計算 ---
+            hist['MA5'] = hist['Close'].rolling(5).mean()
+            hist['MA20'] = hist['Close'].rolling(20).mean()
+            hist['MA60'] = hist['Close'].rolling(60).mean()
             
+            ma5 = hist['MA5'].iloc[-1]
+            ma20 = hist['MA20'].iloc[-1]
+            ma60 = hist['MA60'].iloc[-1]
+            
+            bb_std = hist['Close'].rolling(20).std().iloc[-1]
+            upper_bb = ma20 + 2 * bb_std
+            bb_width = (4 * bb_std) / ma20
+            
+            # 儲存繪圖用的歷史資料 (保留最新的 60 天，此時均線皆已計算完成)
+            price_history_dict[display_name] = hist.tail(60)
+
+            # --- 籌碼與量能分析 ---
             vol_today = hist['Volume'].iloc[-1]
             vol_prev = hist['Volume'].iloc[-2]
             vol_ma5 = hist['Volume'].rolling(5).mean().iloc[-1]
@@ -101,9 +116,7 @@ def get_stock_advanced_data(stock_dict):
             obv = (np.sign(hist['Close'] - hist['Close'].shift(1)) * hist['Volume']).fillna(0).cumsum()
             obv_10ma = obv.rolling(10).mean().iloc[-1]
             
-            bb_std = hist['Close'].rolling(20).std().iloc[-1]
-            bb_width = (4 * bb_std) / ma20
-            
+            # --- KD 指標 ---
             low_9 = hist['Low'].rolling(9).min()
             high_9 = hist['High'].rolling(9).max()
             rsv = (hist['Close'] - low_9) / (high_9 - low_9) * 100
@@ -114,10 +127,8 @@ def get_stock_advanced_data(stock_dict):
             kd_k = k_series.iloc[-1]
             kd_d = d_series.iloc[-1]
             kd_golden = (k_series.iloc[-1] > d_series.iloc[-1]) and (k_series.iloc[-2] <= d_series.iloc[-2])
-            
-            # 儲存最後 60 天的 K 線資料畫圖用
-            price_history_dict[display_name] = hist.tail(60)
 
+            # ================= ⚔️ N字戰法核心邏輯 (依最新需求更新) =================
             action = "⚪ 盤整觀望"
             action_priority = 99
             is_red = close > open_price
@@ -132,9 +143,12 @@ def get_stock_advanced_data(stock_dict):
                 action, action_priority = "💎 跌破月線護盤", 2
             elif close < ma20 and close >= ma60 and not inst_sell and not inst_buy:
                 action, action_priority = "🛌 守季線觀察", 8
+            
+            # 起手式：站上5MA與20MA，且今日量 > 昨日量
             elif close > ma5 and close > ma20 and vol_up:
                 if is_red:
-                    if inst_buy and kd_golden:
+                    # 💡 更新：加入突破上布林條件
+                    if inst_buy and kd_golden and close > upper_bb:
                         action, action_priority = "💰 強力加碼", 1
                     elif kd_golden and not inst_buy:
                         action, action_priority = "➕ 加碼金叉", 3
@@ -143,27 +157,19 @@ def get_stock_advanced_data(stock_dict):
                     else:
                         action, action_priority = "🔴 試水溫", 4
                 elif is_black:
-                    action, action_priority = "👀 收黑開高走低 (避雷)", 10
+                    action, action_priority = "👀 收黑開高走低", 10
             elif close >= ma20:
                 action, action_priority = "🟢 持股", 9
 
             is_potential = (close > ma20) and (bb_width < 0.15) and (obv.iloc[-1] > obv_10ma)
             
-            # 優化基本面抓取邏輯
             try:
                 info = t.info
-                # 嘗試抓 trailingEps，沒有就抓 forwardEps
                 eps_val = info.get('trailingEps') or info.get('forwardEps')
                 eps_str = round(eps_val, 2) if eps_val else "N/A"
             except:
                 eps_str = "N/A"
                 
-            try:
-                yoy_val = info.get('revenueGrowth')
-                yoy_str = f"{round(yoy_val * 100, 2)}%" if yoy_val else "N/A"
-            except:
-                yoy_str = "N/A"
-
             data_list.append({
                 "代號": symbol, 
                 "所屬題材": SYMBOL_TO_THEME.get(symbol, "自選股"),
@@ -177,9 +183,7 @@ def get_stock_advanced_data(stock_dict):
                 "策略權重": action_priority,
                 "黑馬潛力": "🐎 爆發準備" if is_potential else "-",
                 "籌碼動能": "爆量流入" if inst_buy else ("量縮觀望" if inst_sell else "量能平穩"), 
-                "近四季EPS": eps_str,
-                "營收YoY": yoy_str,
-                "營收MoM": "N/A"
+                "近四季EPS": eps_str
             })
         except:
             pass
@@ -199,17 +203,28 @@ def color_pct(val):
         if val < 0: return 'color: #00cc96; font-weight: bold;'
     return ''
 
-# 繪製專業 K 線圖函數
+# 繪製專業 K 線圖 + 均線函數
 def plot_candlestick(hist_df, stock_name):
-    fig = go.Figure(data=[go.Candlestick(x=hist_df.index,
-                    open=hist_df['Open'],
-                    high=hist_df['High'],
-                    low=hist_df['Low'],
-                    close=hist_df['Close'],
-                    increasing_line_color='#ff4b4b', decreasing_line_color='#00cc96')])
-    fig.update_layout(title=f"{stock_name} - 近三個月 K 線圖",
+    fig = go.Figure()
+    
+    # K 線圖
+    fig.add_trace(go.Candlestick(x=hist_df.index,
+                    open=hist_df['Open'], high=hist_df['High'],
+                    low=hist_df['Low'], close=hist_df['Close'],
+                    name='K線',
+                    increasing_line_color='#ff4b4b', decreasing_line_color='#00cc96'))
+    
+    # 5日均線 (橘色)
+    fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['MA5'], name='5MA', line=dict(color='#FFA500', width=1.5)))
+    # 20日均線 (藍色)
+    fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['MA20'], name='20MA', line=dict(color='#1E90FF', width=1.5)))
+    # 60日均線 (紫色)
+    fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['MA60'], name='60MA', line=dict(color='#8A2BE2', width=1.5)))
+
+    fig.update_layout(title=f"{stock_name} - 技術線型 (含 5/20/60MA)",
                       xaxis_rangeslider_visible=False,
-                      height=400, margin=dict(l=20, r=20, t=40, b=20))
+                      height=450, margin=dict(l=20, r=20, t=40, b=20),
+                      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
     return fig
 
 # ================= 5. UI 視覺化與介面 =================
@@ -219,7 +234,6 @@ st.sidebar.header("關於 Jhuu")
 st.sidebar.write("結合商業邏輯與數據實作，在這裡分享我對盤面的觀察。")
 st.sidebar.markdown("---")
 
-# 💼 新增：我的持股輸入區
 st.sidebar.header("💼 我的持股追蹤")
 my_holdings_input = st.sidebar.text_input("輸入股票代號 (用逗號分隔，如: 2330, 2317)", "")
 my_holdings_dict = {}
@@ -236,6 +250,7 @@ if st.sidebar.button("強制刷新所有數據"):
 
 tab1, tab2, tab3 = st.tabs(["首頁：大盤與題材", "細部題材：技術面與籌碼", "N字戰法選股系統"])
 
+# --- 橫向排版：首頁 ---
 with tab1:
     st.subheader("全球市場溫度計")
     indices_data = get_indices()
@@ -244,20 +259,26 @@ with tab1:
         cols[idx].metric(label=name, value=data["現價"], delta=f"{data['漲跌幅']}%")
     
     st.markdown("---")
-    st.subheader("大盤與題材盤後分析")
-    st.info(DAILY_ANALYSIS)
-                    
-    st.markdown("---")
-    st.subheader("今日題材熱度排行")
-    with st.spinner("計算題材熱度中..."):
-        theme_summary = []
-        for theme, stocks in STOCK_DB.items():
-            df_t, _ = get_stock_advanced_data(stocks)
-            if not df_t.empty:
-                theme_summary.append({"題材名稱": theme, "平均漲跌幅(%)": round(df_t["漲跌幅(%)"].mean(), 2)})
-        if theme_summary:
-            sdf = pd.DataFrame(theme_summary).sort_values("平均漲跌幅(%)", ascending=False)
-            st.dataframe(sdf, column_config={"平均漲跌幅(%)": st.column_config.ProgressColumn("平均漲跌幅(%)", min_value=-10, max_value=10, format="%.2f %%")}, use_container_width=True, hide_index=True)
+    
+    # 🌟 核心橫向排版：將熱門排行鎖定高度放左邊，分析放右邊
+    col_left, col_right = st.columns([1.5, 1])
+    
+    with col_left:
+        st.subheader("今日題材熱度排行")
+        with st.spinner("計算熱度中..."):
+            theme_summary = []
+            for theme, stocks in STOCK_DB.items():
+                df_t, _ = get_stock_advanced_data(stocks)
+                if not df_t.empty:
+                    theme_summary.append({"題材名稱": theme, "平均漲跌幅(%)": round(df_t["漲跌幅(%)"].mean(), 2)})
+            if theme_summary:
+                sdf = pd.DataFrame(theme_summary).sort_values("平均漲跌幅(%)", ascending=False)
+                # height=350 鎖死高度，讓它可以用滾動條瀏覽
+                st.dataframe(sdf, height=350, column_config={"平均漲跌幅(%)": st.column_config.ProgressColumn("平均漲跌幅(%)", min_value=-10, max_value=10, format="%.2f %%")}, use_container_width=True, hide_index=True)
+                
+    with col_right:
+        st.subheader("大盤與題材盤後分析")
+        st.info(DAILY_ANALYSIS)
 
 with tab2:
     selected_theme = st.sidebar.selectbox("請選擇要追蹤的盤面族群", list(STOCK_DB.keys()))
@@ -268,55 +289,59 @@ with tab2:
         
         if not df_final.empty:
             display_df = df_final.drop(columns=['策略權重', 'N字戰法策略', '黑馬潛力', '所屬題材']).set_index("代號")
-            st.dataframe(display_df.style.map(color_pct, subset=['漲跌幅(%)']), use_container_width=True)
+            st.dataframe(display_df.style.map(color_pct, subset=['漲跌幅(%)']), height=300, use_container_width=True)
             
             st.markdown("---")
-            st.subheader("專業 K 線圖")
+            st.subheader("專業 K 線圖分析")
             target_stock = st.selectbox("選取個股查看 K 線：", df_final['指標股'].tolist())
             if target_stock in price_hist_all:
                 st.plotly_chart(plot_candlestick(price_hist_all[target_stock], target_stock), use_container_width=True)
         else:
             st.warning("暫時無法取得該族群資料。")
 
+# --- 橫向排版：N字戰法 ---
 with tab3:
     st.subheader("N字戰法與主力黑馬掃描")
     
-    # --- 新增：我的持股健檢區塊 ---
-    if my_holdings_dict:
-        st.markdown("### 💼 我的持股健檢")
-        with st.spinner("掃描持股中..."):
-            df_my, _ = get_stock_advanced_data(my_holdings_dict)
-            if not df_my.empty:
-                cols = ['代號', '指標股', '漲跌幅(%)', '現價', 'K值', 'D值', 'J值', 'N字戰法策略', '籌碼動能']
-                df_my_display = df_my[cols].reset_index(drop=True)
-                st.dataframe(df_my_display.style.map(color_strategy, subset=['N字戰法策略']).map(color_pct, subset=['漲跌幅(%)']), use_container_width=True)
-            else:
-                st.warning("找不到輸入的股票資料，請確認代號是否正確。")
-        st.markdown("---")
-
-    st.markdown("整合所有題材庫股票，透過均線、布林通道與量能回測，自動給出今日買賣動作建議。")
+    # 🌟 核心橫向排版：持股健檢與黑馬放上方並排
+    col_t1, col_t2 = st.columns(2)
     
-    with st.spinner("系統正在全域掃描所有股票，請稍候..."):
-        all_stocks_flat = {}
-        for theme, stocks in STOCK_DB.items():
-            all_stocks_flat.update(stocks)
+    with col_t1:
+        st.markdown("### 💼 我的持股健檢")
+        if my_holdings_dict:
+            with st.spinner("掃描持股中..."):
+                df_my, _ = get_stock_advanced_data(my_holdings_dict)
+                if not df_my.empty:
+                    cols_my = ['代號', '指標股', '漲跌幅(%)', '現價', 'K值', 'D值', 'J值', 'N字戰法策略', '籌碼動能']
+                    df_my_display = df_my[cols_my].reset_index(drop=True)
+                    st.dataframe(df_my_display.style.map(color_strategy, subset=['N字戰法策略']).map(color_pct, subset=['漲跌幅(%)']), height=200, use_container_width=True)
+                else:
+                    st.warning("找不到輸入的股票資料。")
+        else:
+            st.info("請從左側邊欄輸入您的持股代號進行健檢。")
             
-        df_all, _ = get_stock_advanced_data(all_stocks_flat)
-        
-        if not df_all.empty:
-            df_sorted = df_all.sort_values(by="策略權重", ascending=True).drop(columns=['策略權重']).reset_index(drop=True)
-            cols = ['代號', '所屬題材', '指標股', '漲跌幅(%)', '現價', 'K值', 'D值', 'J值', 'N字戰法策略', '黑馬潛力', '籌碼動能', '近四季EPS', '營收YoY', '營收MoM']
-            df_sorted = df_sorted[cols]
+    with col_t2:
+        st.markdown("### 🐎 今日潛在爆發黑馬")
+        with st.spinner("掃描黑馬中..."):
+            all_stocks_flat = {}
+            for theme, stocks in STOCK_DB.items():
+                all_stocks_flat.update(stocks)
+            df_all, _ = get_stock_advanced_data(all_stocks_flat)
             
-            st.dataframe(df_sorted.style.map(color_strategy, subset=['N字戰法策略', '黑馬潛力'])
-                                        .map(color_pct, subset=['漲跌幅(%)']), use_container_width=True)
-            
-            st.markdown("---")
-            st.markdown("### 今日潛在爆發黑馬 (死魚盤準備翻身)")
-            df_potential = df_all[df_all['黑馬潛力'] != "-"]
-            if not df_potential.empty:
-                df_potential = df_potential[cols]
-                st.dataframe(df_potential.reset_index(drop=True).style.map(color_strategy, subset=['N字戰法策略', '黑馬潛力'])
-                                                                      .map(color_pct, subset=['漲跌幅(%)']), use_container_width=True)
-            else:
-                st.info("今日無符合布林極度壓縮且主力吃貨的黑馬股。")
+            if not df_all.empty:
+                cols_full = ['代號', '所屬題材', '指標股', '漲跌幅(%)', '現價', 'K值', 'D值', 'N字戰法策略', '黑馬潛力', '籌碼動能', '近四季EPS']
+                df_potential = df_all[df_all['黑馬潛力'] != "-"]
+                if not df_potential.empty:
+                    df_potential = df_potential[cols_full]
+                    st.dataframe(df_potential.reset_index(drop=True).style.map(color_strategy, subset=['N字戰法策略', '黑馬潛力']).map(color_pct, subset=['漲跌幅(%)']), height=200, use_container_width=True)
+                else:
+                    st.info("今日無符合布林極度壓縮且主力吃貨的黑馬股。")
+
+    st.markdown("---")
+    st.markdown("### 🎯 全市場 N字戰法總表")
+    if not df_all.empty:
+        df_sorted = df_all.sort_values(by="策略權重", ascending=True).drop(columns=['策略權重']).reset_index(drop=True)
+        df_sorted = df_sorted[cols_full]
+        # 鎖死總表高度為 500px，不會佔用太多版面
+        st.dataframe(df_sorted.style.map(color_strategy, subset=['N字戰法策略', '黑馬潛力'])
+                                    .map(color_pct, subset=['漲跌幅(%)']), height=500, use_container_width=True)
