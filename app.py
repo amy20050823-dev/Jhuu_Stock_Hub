@@ -71,7 +71,6 @@ def get_indices():
     for name, symbol in indices_dict.items():
         try:
             hist = yf.Ticker(symbol).history(period="5d")
-            # 防護網：確保抓回來的資料沒有 NaN
             hist = hist.dropna(subset=['Close'])
             if len(hist) >= 2:
                 close, prev = hist['Close'].iloc[-1], hist['Close'].iloc[-2]
@@ -105,7 +104,6 @@ def get_stock_advanced_data(stock_dict):
                 if isinstance(batch_data.columns, pd.MultiIndex):
                     if tkr in batch_data.columns.get_level_values(0):
                         temp_hist = batch_data[tkr].copy()
-                        # 🛡️ 半夜防當機：剔除缺少收盤價或成交量的「幽靈數據」
                         temp_hist = temp_hist.dropna(subset=['Close', 'Volume']) 
                         if len(temp_hist) >= 60:
                             hist = temp_hist
@@ -169,7 +167,8 @@ def get_stock_advanced_data(stock_dict):
 
             data_list.append({
                 "代號": symbol, 
-                "所屬題材": SYMBOL_TO_THEME.get(symbol, "自選"),
+                # 如果不在預設資料庫裡，一律標示為自選股
+                "所屬題材": SYMBOL_TO_THEME.get(symbol, "📌 自選股"),
                 "指標股": display_name, 
                 "漲跌幅(%)": round(change_pct, 2), 
                 "現價": round(close, 2), 
@@ -215,7 +214,7 @@ sel_theme = st.sidebar.selectbox("請選擇族群", list(STOCK_DB.keys()))
 
 st.sidebar.markdown("---")
 st.sidebar.header("💼 我的持股追蹤")
-my_holdings_input = st.sidebar.text_input("輸入股票代號 (用逗號分隔，如: 2330, 2317)", "")
+my_holdings_input = st.sidebar.text_input("輸入股票代號 (用逗號分隔，如: 8064, 2330)", "")
 my_holdings_dict = {}
 if my_holdings_input:
     for s in my_holdings_input.split(','):
@@ -266,7 +265,6 @@ with tab2:
             st.dataframe(df_f[['指標股', '漲跌幅(%)', '現價', '籌碼動能']].style.map(color_pct, subset=['漲跌幅(%)']), use_container_width=True)
             st.markdown("---")
             target = st.selectbox("查看 K 線與成交量", df_f['指標股'].tolist(), key="t2")
-            # 🛡️ 加入 key 確保 ID 不會重複
             if target in hist_all: st.plotly_chart(plot_k_volume(hist_all[target], target), use_container_width=True, key=f"chart_tab2_{target}")
         else:
             st.error("⚠️ 無法載入個股資料，請點擊強制刷新重試。")
@@ -274,10 +272,14 @@ with tab2:
 with tab3:
     st.subheader("波段選股與主力黑馬掃描")
     
+    # 💡 核心優化：將使用者的持股，無縫併入「全域掃描池」
     all_flat = {}
     for th, stks in STOCK_DB.items(): all_flat.update(stks)
+    if my_holdings_dict:
+        all_flat.update(my_holdings_dict)
     
     with st.spinner("全域極速掃描中..."):
+        # 這裡只會跟 Yahoo 下載「一次」資料，速度極快！
         df_a, hist_a = get_stock_advanced_data(all_flat)
         
         if not df_a.empty:
@@ -285,11 +287,14 @@ with tab3:
                 col_t1, col_t2 = st.columns(2)
                 with col_t1:
                     st.markdown("### 💼 我的持股健檢")
-                    df_my, _ = get_stock_advanced_data(my_holdings_dict)
+                    # 直接從總表裡面把使用者的持股過濾出來顯示
+                    my_symbols = list(my_holdings_dict.keys())
+                    df_my = df_a[df_a['代號'].isin(my_symbols)]
+                    
                     if not df_my.empty:
-                        st.dataframe(df_my[['指標股', '漲跌幅(%)', '現價', '波段策略', '籌碼動能']].style.map(color_strategy, subset=['波段策略']).map(color_pct, subset=['漲跌幅(%)']), height=200, use_container_width=True)
+                        st.dataframe(df_my[['指標股', '漲跌幅(%)', '現價', '波段策略', '籌碼動能']].reset_index(drop=True).style.map(color_strategy, subset=['波段策略']).map(color_pct, subset=['漲跌幅(%)']), height=200, use_container_width=True)
                     else:
-                        st.warning("找不到輸入的股票資料。")
+                        st.warning("找不到輸入的股票資料，請確認代號是否正確。")
                 with col_t2:
                     st.markdown("### 🐎 今日潛在爆發黑馬")
                     df_potential = df_a[df_a['黑馬潛力'] != "-"]
@@ -313,7 +318,6 @@ with tab3:
             st.markdown("---")
             st.subheader("全域個股線型觀測")
             target_a = st.selectbox("選擇個股", df_s['指標股'].tolist(), key="t3")
-            # 🛡️ 加入 key 確保 ID 不會重複
             if target_a in hist_a: st.plotly_chart(plot_k_volume(hist_a[target_a], target_a), use_container_width=True, key=f"chart_tab3_{target_a}")
         else:
             st.error("⚠️ Yahoo Finance 暫時阻擋了連線，選股系統暫時無法運作。")
