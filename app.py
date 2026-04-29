@@ -146,7 +146,7 @@ def get_stock_advanced_data(stock_dict):
             vol_today = hist['Volume'].iloc[-1]
             vol_ma5 = hist['Volume'].rolling(5).mean().iloc[-1]
             
-            # K線解剖：計算實體與影線
+            # 💡 修正後更敏銳的 K 線解剖學
             real_body = abs(close - open_p)
             real_body = real_body if real_body > 0 else 0.001
             total_length = high_p - low_p
@@ -155,8 +155,10 @@ def get_stock_advanced_data(stock_dict):
             upper_shadow = high_p - max(close, open_p)
             lower_shadow = min(close, open_p) - low_p
             
-            is_lightning_rod = (upper_shadow > real_body * 1.5) or (upper_shadow / total_length > 0.5)
-            is_bottom_needle = (lower_shadow > real_body * 2)
+            # 只要上影線長於實體，或佔全天振幅 40% 以上，即視為出貨避雷針
+            is_lightning_rod = (upper_shadow > real_body) or (upper_shadow / total_length >= 0.4)
+            # 只要下影線大於實體 1.5 倍，或佔全天振幅 40% 以上，即視為主力護盤
+            is_bottom_needle = (lower_shadow > real_body * 1.5) or (lower_shadow / total_length >= 0.4)
 
             low_9 = hist['Low'].rolling(9).min()
             high_9 = hist['High'].rolling(9).max()
@@ -168,6 +170,7 @@ def get_stock_advanced_data(stock_dict):
             action = "⚪ 盤整觀望"
             action_prio = 99
             
+            # 策略核心邏輯
             if k_s.iloc[-1] > 80 and close < hist['MA5'].iloc[-1]: action, action_prio = "💸 獲利了結", 6
             elif close < hist['MA20'].iloc[-1]: 
                 if close < hist['MA60'].iloc[-1] or vol_today < vol_ma5 * 0.7: action, action_prio = "🛑 賣出停損", 5
@@ -185,9 +188,9 @@ def get_stock_advanced_data(stock_dict):
 
             # 🛡️ 影線防護網覆寫機制
             if action in ["🚀 超級進場點", "💰 強力加碼", "➕ 加碼金叉", "🔴 試水溫"] and is_lightning_rod:
-                action, action_prio = "⚡ 上影線警告", 11 # 降級警告
+                action, action_prio = "⚡ 上影線警告", 11 
             elif action in ["🛑 賣出停損", "🛌 守季線觀察"] and is_bottom_needle:
-                action, action_prio = "🔨 下影線護盤", 2 # 升級買點
+                action, action_prio = "🔨 下影線護盤", 2 
 
             obv = (np.sign(hist['Close'] - hist['Close'].shift(1)) * hist['Volume']).fillna(0).cumsum()
             is_potential = (close > hist['MA20'].iloc[-1]) and (bb_width < 0.15) and (obv.iloc[-1] > obv.rolling(10).mean().iloc[-1])
