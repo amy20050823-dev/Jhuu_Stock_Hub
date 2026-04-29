@@ -17,11 +17,11 @@ DAILY_ANALYSIS = """
 建議觀察：1. 是否有新題材在新聞中頻繁出現？ 2. 個股突破布林上緣且爆量時的「超級進場點」。
 """
 
-# ================= 3. 產業題材與龍頭資料庫 (擴大升級版) =================
+# ================= 3. 產業題材與龍頭資料庫 =================
 STOCK_DB = {
     "輝達GTC/伺服器": {"2330": "台積電", "2317": "鴻海", "2382": "廣達", "3231": "緯創", "2376": "技嘉", "6669": "緯穎", "3706": "神達"},
     "CPO/光通訊": {"4979": "華星光", "3450": "聯鈞", "3081": "聯亞", "3363": "上詮", "6442": "光聖", "6451": "訊芯-KY", "3163": "波若威"},
-    "PCB/銅箔基板": {"2383": "台光電", "6213": "聯茂", "6274": "台燿", "2368": "金像電", "2313": "華通"}, # 欣興、南電、景碩移至 ABF
+    "PCB/銅箔基板": {"2383": "台光電", "6213": "聯茂", "6274": "台燿", "2368": "金像電", "2313": "華通"},
     "網通/石英元件": {"3042": "晶技", "3221": "台嘉碩", "8182": "加高", "2484": "希華"},
     "記憶體": {"2408": "南亞科", "2344": "華邦電", "8299": "群聯", "3260": "威剛"},
     "散熱管理": {"3017": "奇鋐", "3324": "雙鴻", "2421": "建準", "6230": "超眾", "8996": "高力"},
@@ -31,7 +31,7 @@ STOCK_DB = {
     "ASIC/IP矽智財": {"3443": "智原", "3661": "世芯-KY", "6643": "M31", "6533": "晶心科"},
     "高速傳輸與介面": {"4966": "譜瑞-KY", "5269": "祥碩", "6756": "威鋒電子", "6661": "威健"},
     "CoWoS/先進封裝": {"3131": "弘塑", "6187": "萬潤", "5443": "均豪", "6640": "均華", "6196": "帆宣"},
-    "半導體耗材與檢測": {"6223": "旺矽", "6217": "中探針", "1560": "研伸", "3583": "辛耘"}, # 勝一移至化學材料
+    "半導體耗材與檢測": {"6223": "旺矽", "6217": "中探針", "1560": "研伸", "3583": "辛耘"},
     "邊緣運算與MCU": {"2454": "聯發科", "4919": "盛群", "2337": "旺宏"},
     "AI機器人/自動化": {"2359": "所羅門", "2365": "昆盈", "6414": "樺漢", "8374": "羅昇", "4510": "高鋒"},
     "低軌衛星": {"2313": "華通", "3491": "昇達科", "6271": "同欣電", "3380": "明泰"},
@@ -71,6 +71,8 @@ def get_indices():
     for name, symbol in indices_dict.items():
         try:
             hist = yf.Ticker(symbol).history(period="5d")
+            # 防護網：確保抓回來的資料沒有 NaN
+            hist = hist.dropna(subset=['Close'])
             if len(hist) >= 2:
                 close, prev = hist['Close'].iloc[-1], hist['Close'].iloc[-2]
                 res[name] = {"現價": round(close, 2), "漲跌幅": round((close-prev)/prev*100, 2)}
@@ -83,17 +85,36 @@ def get_stock_advanced_data(stock_dict):
     data_list = []
     price_history_dict = {} 
     
+    if not stock_dict:
+        return pd.DataFrame(data_list), price_history_dict
+
+    tickers_to_dl = []
+    for sym in stock_dict.keys():
+        tickers_to_dl.extend([f"{sym}.TW", f"{sym}.TWO"])
+    
+    try:
+        batch_data = yf.download(tickers_to_dl, period="4mo", group_by="ticker", progress=False, threads=True)
+    except Exception as e:
+        return pd.DataFrame(), {}
+
     for symbol, name in stock_dict.items():
         try:
-            t = None
             hist = pd.DataFrame()
             for suffix in [".TW", ".TWO"]:
-                temp_t = yf.Ticker(f"{symbol}{suffix}")
-                temp_hist = temp_t.history(period="4mo")
-                if len(temp_hist) >= 60:
-                    t = temp_t
-                    hist = temp_hist
-                    break
+                tkr = f"{symbol}{suffix}"
+                if isinstance(batch_data.columns, pd.MultiIndex):
+                    if tkr in batch_data.columns.get_level_values(0):
+                        temp_hist = batch_data[tkr].copy()
+                        # 🛡️ 半夜防當機：剔除缺少收盤價或成交量的「幽靈數據」
+                        temp_hist = temp_hist.dropna(subset=['Close', 'Volume']) 
+                        if len(temp_hist) >= 60:
+                            hist = temp_hist
+                            break
+                else:
+                    temp_hist = batch_data.copy().dropna(subset=['Close', 'Volume'])
+                    if len(temp_hist) >= 60:
+                        hist = temp_hist
+                        break
             
             if hist.empty or len(hist) < 60: continue
                 
@@ -128,7 +149,6 @@ def get_stock_advanced_data(stock_dict):
             action = "⚪ 盤整觀望"
             action_prio = 99
             
-            # 策略核心邏輯
             if k_s.iloc[-1] > 80 and close < hist['MA5'].iloc[-1]: action, action_prio = "💸 獲利了結", 6
             elif close < hist['MA20'].iloc[-1]: 
                 if close < hist['MA60'].iloc[-1] or vol_today < vol_ma5 * 0.7: action, action_prio = "🛑 賣出停損", 5
@@ -190,12 +210,10 @@ def color_pct(val):
 # ================= 5. UI 介面 =================
 st.title("台股題材動態觀測站")
 
-# 側邊欄：族群追蹤在上，持股在下
 st.sidebar.header("盤面族群追蹤")
 sel_theme = st.sidebar.selectbox("請選擇族群", list(STOCK_DB.keys()))
 
 st.sidebar.markdown("---")
-# 💼 復活的持股輸入框
 st.sidebar.header("💼 我的持股追蹤")
 my_holdings_input = st.sidebar.text_input("輸入股票代號 (用逗號分隔，如: 2330, 2317)", "")
 my_holdings_dict = {}
@@ -223,7 +241,7 @@ with tab1:
     col_l, col_r = st.columns([1.5, 1])
     with col_l:
         st.subheader("今日熱門排行")
-        with st.spinner("抓取最新資料中... (若長時間空白代表 Yahoo 伺服器忙碌中)"):
+        with st.spinner("極速批次載入資料中..."):
             theme_res = []
             for th, stks in STOCK_DB.items():
                 df_t, _ = get_stock_advanced_data(stks)
@@ -231,7 +249,7 @@ with tab1:
             if theme_res:
                 st.dataframe(pd.DataFrame(theme_res).sort_values("漲跌(%)", ascending=False), height=300, use_container_width=True, hide_index=True)
             else:
-                st.error("⚠️ Yahoo Finance 暫時阻擋了連線，請過幾分鐘後再重試。")
+                st.error("⚠️ 資料擷取中，請稍候再點擊強制刷新。")
             
     with col_r:
         st.subheader("題材偵察機 (盤面新聞)")
@@ -242,14 +260,16 @@ with tab1:
 
 with tab2:
     st.subheader(f"{sel_theme} - 技術與籌碼分析")
-    df_f, hist_all = get_stock_advanced_data(STOCK_DB[sel_theme])
-    if not df_f.empty:
-        st.dataframe(df_f[['指標股', '漲跌幅(%)', '現價', '籌碼動能']].style.map(color_pct, subset=['漲跌幅(%)']), use_container_width=True)
-        st.markdown("---")
-        target = st.selectbox("查看 K 線與成交量", df_f['指標股'].tolist(), key="t2")
-        if target in hist_all: st.plotly_chart(plot_k_volume(hist_all[target], target), use_container_width=True)
-    else:
-         st.error("⚠️ Yahoo Finance 暫時阻擋了連線，無法載入個股資料。")
+    with st.spinner("極速載入中..."):
+        df_f, hist_all = get_stock_advanced_data(STOCK_DB[sel_theme])
+        if not df_f.empty:
+            st.dataframe(df_f[['指標股', '漲跌幅(%)', '現價', '籌碼動能']].style.map(color_pct, subset=['漲跌幅(%)']), use_container_width=True)
+            st.markdown("---")
+            target = st.selectbox("查看 K 線與成交量", df_f['指標股'].tolist(), key="t2")
+            # 🛡️ 加入 key 確保 ID 不會重複
+            if target in hist_all: st.plotly_chart(plot_k_volume(hist_all[target], target), use_container_width=True, key=f"chart_tab2_{target}")
+        else:
+            st.error("⚠️ 無法載入個股資料，請點擊強制刷新重試。")
 
 with tab3:
     st.subheader("波段選股與主力黑馬掃描")
@@ -257,11 +277,10 @@ with tab3:
     all_flat = {}
     for th, stks in STOCK_DB.items(): all_flat.update(stks)
     
-    with st.spinner("全域掃描中..."):
+    with st.spinner("全域極速掃描中..."):
         df_a, hist_a = get_stock_advanced_data(all_flat)
         
         if not df_a.empty:
-            # 💡 判斷：如果有輸入持股，才顯示持股區塊，沒有的話就只顯示黑馬股，不佔空間
             if my_holdings_dict:
                 col_t1, col_t2 = st.columns(2)
                 with col_t1:
@@ -279,7 +298,6 @@ with tab3:
                     else:
                         st.info("今日無符合布林極度壓縮且主力吃貨的黑馬股。")
             else:
-                # 沒輸入持股時，黑馬區塊展開獨佔版面
                 st.markdown("### 🐎 今日潛在爆發黑馬")
                 df_potential = df_a[df_a['黑馬潛力'] != "-"]
                 if not df_potential.empty:
@@ -295,6 +313,7 @@ with tab3:
             st.markdown("---")
             st.subheader("全域個股線型觀測")
             target_a = st.selectbox("選擇個股", df_s['指標股'].tolist(), key="t3")
-            if target_a in hist_a: st.plotly_chart(plot_k_volume(hist_a[target_a], target_a), use_container_width=True)
+            # 🛡️ 加入 key 確保 ID 不會重複
+            if target_a in hist_a: st.plotly_chart(plot_k_volume(hist_a[target_a], target_a), use_container_width=True, key=f"chart_tab3_{target_a}")
         else:
             st.error("⚠️ Yahoo Finance 暫時阻擋了連線，選股系統暫時無法運作。")
