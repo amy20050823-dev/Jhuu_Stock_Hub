@@ -6,6 +6,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import requests
 from bs4 import BeautifulSoup
+from datetime import datetime
+import pytz
 
 # ================= 1. 網頁配置 =================
 st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
@@ -96,7 +98,7 @@ def get_indices():
     return res
 
 @st.cache_data(ttl=600)
-def get_stock_advanced_data(stock_dict):
+def get_stock_advanced_data(stock_dict, vip_symbols=[]):
     data_list = []
     price_history_dict = {} 
     
@@ -108,7 +110,7 @@ def get_stock_advanced_data(stock_dict):
         tickers_to_dl.extend([f"{sym}.TW", f"{sym}.TWO"])
     
     try:
-        # 回歸最穩定的 4mo 抓取法，確保抓到最新一筆
+        # 第一次：取得歷史資料批次
         batch_data = yf.download(tickers_to_dl, period="4mo", group_by="ticker", progress=False, threads=True)
     except Exception as e:
         return pd.DataFrame(), {}
@@ -116,6 +118,7 @@ def get_stock_advanced_data(stock_dict):
     for symbol, name in stock_dict.items():
         try:
             hist = pd.DataFrame()
+            tkr_suffix = ""
             for suffix in [".TW", ".TWO"]:
                 tkr = f"{symbol}{suffix}"
                 if isinstance(batch_data.columns, pd.MultiIndex):
@@ -124,19 +127,39 @@ def get_stock_advanced_data(stock_dict):
                         temp_hist = temp_hist.dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low']) 
                         if len(temp_hist) >= 60:
                             hist = temp_hist
+                            tkr_suffix = tkr
                             break
                 else:
                     temp_hist = batch_data.copy().dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low'])
                     if len(temp_hist) >= 60:
                         hist = temp_hist
+                        tkr_suffix = tkr
                         break
             
             if hist.empty or len(hist) < 60: continue
-                
+
+            # 💡 VIP 強制縫合技術：如果是使用者手動輸入的持股，啟動特權抓取最新一天！
+            if symbol in vip_symbols:
+                try:
+                    # 使用 history 獨立呼叫，繞過批次資料庫的延遲
+                    latest_data = yf.Ticker(tkr_suffix).history(period="1d")
+                    if not latest_data.empty:
+                        last_hist_date = hist.index[-1].date()
+                        latest_data_date = latest_data.index[-1].date()
+                        
+                        # 如果獨立抓取到的日期 比 歷史批次給的更新，就執行「縫合」
+                        if latest_data_date > last_hist_date:
+                            # 取出需要的欄位黏上去
+                            latest_row = latest_data[['Open', 'High', 'Low', 'Close', 'Volume']]
+                            hist = pd.concat([hist, latest_row])
+                            # 去除可能重複的索引，確保乾淨
+                            hist = hist[~hist.index.duplicated(keep='last')]
+                except Exception as e:
+                    pass # 如果縫合失敗，就默默使用原本的資料
+
             crown = "👑 " if symbol in LEADERS else ""
             display_name = f"{crown}{name} ({symbol})"
             
-            # 💡 抓取這筆資料的「真實日期」，做為照妖鏡防呆
             last_date_str = hist.index[-1].strftime('%m/%d')
 
             close = float(hist['Close'].iloc[-1])
@@ -208,7 +231,7 @@ def get_stock_advanced_data(stock_dict):
             is_potential = (close > hist['MA20'].iloc[-1]) and (bb_width < 0.15) and (obv.iloc[-1] > obv.rolling(10).mean().iloc[-1])
 
             data_list.append({
-                "資料日期": last_date_str,  # 💡 加入資料日期防呆
+                "資料日期": last_date_str,
                 "代號": symbol, 
                 "所屬題材": SYMBOL_TO_THEME.get(symbol, "📌 自選股"),
                 "指標股": display_name, 
@@ -291,13 +314,15 @@ sel_theme = st.sidebar.selectbox("請選擇族群", list(STOCK_DB.keys()))
 
 st.sidebar.markdown("---")
 st.sidebar.header("💼 我的持股健檢")
-my_holdings_input = st.sidebar.text_input("輸入股票代號 (如: 8064, 2330)", "")
+my_holdings_input = st.sidebar.text_input("輸入股票代號 (如: 8064, 2485)", "")
 my_holdings_dict = {}
+vip_symbol_list = []  # 💡 準備傳遞給縫合引擎的 VIP 名單
 if my_holdings_input:
     for s in my_holdings_input.split(','):
         s = s.strip()
         if s:
             my_holdings_dict[s] = f"持股 {s}"
+            vip_symbol_list.append(s)
 
 st.sidebar.markdown("---")
 if st.sidebar.button("強制刷新 (載入新題材)"):
@@ -308,7 +333,7 @@ tab1, tab2, tab3 = st.tabs(["首頁：大盤與熱度", "細部題材：技術�
 
 with tab1:
     st.subheader("全球市場溫度計")
-    st.caption("💡 備註：台股最新報價若有延遲，係因 Yahoo API 更新排程所致。")
+    st.caption("💡 備註：Yahoo API 歷史報價若有延遲，可將個股加入「我的持股健檢」啟動 VIP 強制更新。")
     idx_data = get_indices()
     cols = st.columns(len(idx_data))
     for i, (n, d) in enumerate(idx_data.items()):
@@ -340,7 +365,6 @@ with tab2:
     with st.spinner("極速載入中..."):
         df_f, hist_all = get_stock_advanced_data(STOCK_DB[sel_theme])
         if not df_f.empty:
-            # 💡 總表加入「資料日期」欄位
             st.dataframe(df_f[['資料日期', '指標股', '漲跌幅(%)', '現價', '籌碼動能']].style.map(color_pct, subset=['漲跌幅(%)']), use_container_width=True)
             st.markdown("---")
             target = st.selectbox("查看 K 線與成交量", df_f['指標股'].tolist(), key="t2")
@@ -356,19 +380,19 @@ with tab3:
     if my_holdings_dict:
         all_flat.update(my_holdings_dict)
     
-    with st.spinner("全域極速掃描中..."):
-        df_a, hist_a = get_stock_advanced_data(all_flat)
+    with st.spinner("全域極速掃描中 (啟動VIP縫合通道)..."):
+        # 💡 將 VIP 名單傳遞進去
+        df_a, hist_a = get_stock_advanced_data(all_flat, vip_symbols=vip_symbol_list)
         
         if not df_a.empty:
             if my_holdings_dict:
                 col_t1, col_t2 = st.columns(2)
                 with col_t1:
-                    st.markdown("### 💼 我的持股健檢")
+                    st.markdown("### 💼 我的持股健檢 (👑 VIP 即時縫合)")
                     my_symbols = list(my_holdings_dict.keys())
                     df_my = df_a[df_a['代號'].isin(my_symbols)]
                     
                     if not df_my.empty:
-                        # 💡 總表加入「資料日期」欄位
                         st.dataframe(df_my[['資料日期', '指標股', '漲跌幅(%)', '現價', '波段策略', '籌碼動能']].reset_index(drop=True).style.map(color_strategy, subset=['波段策略']).map(color_pct, subset=['漲跌幅(%)']), height=200, use_container_width=True)
                     else:
                         st.warning("找不到輸入的股票資料，請確認代號是否正確。")
@@ -390,7 +414,6 @@ with tab3:
             st.markdown("---")
             st.markdown("### 全市場波段選股總表")
             df_s = df_a.sort_values("策略權重").drop(columns=['策略權重'])
-            # 💡 總表加入「資料日期」欄位，讓妳一眼看穿 Yahoo 有沒有偷懶
             st.dataframe(df_s[['資料日期', '所屬題材', '指標股', '漲跌幅(%)', '現價', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略', '黑馬潛力']).map(color_pct, subset=['漲跌幅(%)']), height=500, use_container_width=True)
             
             st.markdown("---")
