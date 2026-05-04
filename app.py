@@ -6,6 +6,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import requests
 from bs4 import BeautifulSoup
+from datetime import datetime, timedelta
+import pytz
 
 # ================= 1. 網頁配置 =================
 st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
@@ -14,6 +16,38 @@ st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
 if 'custom_themes' not in st.session_state:
     st.session_state['custom_themes'] = {}
 
+# ================= 1.6 台股時區守門員 =================
+def get_tw_trading_dates():
+    """
+    獲取精確的台股交易日範圍，用來向 Yahoo 要資料。
+    避免時區錯亂抓到未開盤或錯天的舊資料。
+    """
+    tw_tz = pytz.timezone('Asia/Taipei')
+    now_tw = datetime.now(tw_tz)
+    
+    # 計算「最近一個已收盤的交易日」
+    latest_trading_day = now_tw
+    
+    if now_tw.weekday() == 5: # 星期六
+        latest_trading_day = now_tw - timedelta(days=1)
+    elif now_tw.weekday() == 6: # 星期日
+        latest_trading_day = now_tw - timedelta(days=2)
+    elif now_tw.weekday() == 0: # 星期一
+        if now_tw.hour < 14 or (now_tw.hour == 14 and now_tw.minute < 30):
+            # 星期一下午兩點半前，抓上週五的資料
+            latest_trading_day = now_tw - timedelta(days=3)
+    else: # 星期二到五
+        if now_tw.hour < 14 or (now_tw.hour == 14 and now_tw.minute < 30):
+            # 下午兩點半前，抓昨天的資料
+            latest_trading_day = now_tw - timedelta(days=1)
+            
+    # 設定下載的結束時間為「最近交易日」的隔天 (因為 yfinance 的 end date 是不包含的)
+    end_date = (latest_trading_day + timedelta(days=1)).strftime('%Y-%m-%d')
+    # 往前推 4 個月作為開始時間
+    start_date = (latest_trading_day - timedelta(days=120)).strftime('%Y-%m-%d')
+    
+    return start_date, end_date
+
 # ================= 2. 大盤解析區 =================
 DAILY_ANALYSIS = """
 【今日大盤與資金流向分析】
@@ -21,14 +55,11 @@ DAILY_ANALYSIS = """
 建議觀察：1. 是否有新題材在新聞中頻繁出現？ 2. 提防高檔上影線警告，留意低檔下影線護盤。
 """
 
-# ================= 3. 產業題材與龍頭資料庫 (🔥 完美校正＋新增題材版) =================
+# ================= 3. 產業題材與龍頭資料庫 (擴編版) =================
 BASE_STOCK_DB = {
-    # --- AI 與伺服器核心 ---
     "輝達GTC/AI伺服器": {"2330": "台積電", "2317": "鴻海", "2382": "廣達", "3231": "緯創", "2376": "技嘉", "6669": "緯穎", "3706": "神達", "2356": "英業達", "2422": "佳能"},
     "散熱管理/水冷": {"3017": "奇鋐", "3324": "雙鴻", "2421": "建準", "6230": "超眾", "8996": "高力", "3483": "力致", "3338": "泰碩", "3653": "健策"},
     "電源與BBU": {"2308": "台達電", "2301": "光寶科", "6409": "旭隼", "6121": "新普", "3211": "順達", "3323": "加百裕", "6781": "AES-KY", "2324": "仁寶"},
-    
-    # --- 半導體與設備 ---
     "CoWoS/先進封裝": {"3131": "弘塑", "6187": "萬潤", "5443": "均豪", "6640": "均華", "6196": "帆宣", "3583": "辛耘", "2338": "光罩", "6515": "穎崴"},
     "傳統與面板級封測": {"3711": "日月光投控", "2449": "京元電子", "6257": "矽格", "3481": "群創", "8064": "東捷", "3580": "友威科"},
     "半導體前端設備": {"3413": "京鼎", "3680": "家登", "8091": "翔名", "3055": "蔚華科"},
@@ -36,14 +67,10 @@ BASE_STOCK_DB = {
     "廠務工程與無塵室": {"2404": "漢唐", "3402": "漢科", "6139": "亞翔", "5536": "聖暉*", "2493": "揚博", "6117": "迎廣"},
     "ASIC/IP矽智財": {"3443": "智原", "3661": "世芯-KY", "6643": "M31", "6533": "晶心科", "3529": "力旺", "3228": "金麗科", "6531": "愛普*"},
     "ABF載板/先進基板": {"3037": "欣興", "8046": "南電", "3189": "景碩", "8050": "廣積"},
-    
-    # --- 網通與光通訊 ---
     "CPO/矽光子": {"4979": "華星光", "3450": "聯鈞", "3081": "聯亞", "3363": "上詮", "6442": "光聖", "6451": "訊芯-KY", "3163": "波若威", "4908": "前鼎", "3234": "光環"},
     "網通/石英元件": {"3042": "晶技", "3221": "台嘉碩", "8182": "加高", "2484": "希華", "3596": "智易", "5388": "中磊", "3380": "明泰", "6285": "啟碁"},
     "低軌衛星": {"2313": "華通", "3491": "昇達科", "6271": "同欣電", "3466": "致振", "3152": "璟德"},
     "高速傳輸/線材": {"4966": "譜瑞-KY", "5269": "祥碩", "6756": "威鋒電子", "6661": "威健", "6653": "嘉基", "3665": "貿聯-KY", "3023": "信邦", "6102": "倚強科"},
-    
-    # --- 終端應用與零組件 ---
     "AI機器人/自動化": {"2359": "所羅門", "2365": "昆盈", "6414": "樺漢", "8374": "羅昇", "4510": "高鋒", "1590": "亞德客-KY", "2049": "上銀", "4545": "銘鈺"},
     "AI PC/工業電腦": {"2357": "華碩", "2353": "宏碁", "2395": "研華", "6245": "立端", "8114": "振樺電", "6206": "飛捷"},
     "PCB/銅箔基板": {"2383": "台光電", "6213": "聯茂", "6274": "台燿", "2368": "金像電", "5469": "瀚宇博", "6153": "嘉聯益"},
@@ -51,8 +78,6 @@ BASE_STOCK_DB = {
     "記憶體與模組": {"2408": "南亞科", "2344": "華邦電", "8299": "群聯", "3260": "威剛", "2451": "創見", "4967": "十銓"}, 
     "被動元件": {"2327": "國巨", "2492": "華新科", "3026": "禾伸堂", "6127": "九暘", "2478": "大毅"},
     "消費性IC/MCU": {"2454": "聯發科", "4919": "盛群", "2337": "旺宏", "3034": "聯詠", "2401": "凌陽", "4952": "凌通"},
-    
-    # --- 傳產與基礎建設 ---
     "重電與能源轉型": {"1513": "中興電", "1519": "華城", "1503": "士電", "1514": "亞力", "1605": "華新", "1515": "力山", "6806": "森崴能源"},
     "航運與航空": {"2603": "長榮", "2609": "陽明", "2615": "萬海", "2618": "長榮航", "2610": "華航", "2634": "漢翔"}
 }
@@ -90,13 +115,19 @@ def get_indices():
         "三星(韓國)": "005930.KS",
         "WTI原油": "CL=F"
     }
+    
+    # 💡 指數也套用時區守門員
+    start_dt, end_dt = get_tw_trading_dates()
+    
     res = {}
     for name, symbol in indices_dict.items():
         try:
-            hist = yf.Ticker(symbol).history(period="5d")
+            hist = yf.download(symbol, start=start_dt, end=end_dt, progress=False)
             hist = hist.dropna(subset=['Close'])
             if len(hist) >= 2:
-                close, prev = hist['Close'].iloc[-1], hist['Close'].iloc[-2]
+                # 這裡可能會有 Series 的問題，確保取到單一數值
+                close = float(hist['Close'].iloc[-1].item() if isinstance(hist['Close'].iloc[-1], pd.Series) else hist['Close'].iloc[-1])
+                prev = float(hist['Close'].iloc[-2].item() if isinstance(hist['Close'].iloc[-2], pd.Series) else hist['Close'].iloc[-2])
                 res[name] = {"現價": round(close, 2), "漲跌幅": round((close-prev)/prev*100, 2)}
             else: res[name] = {"現價": 0, "漲跌幅": 0}
         except: res[name] = {"現價": 0, "漲跌幅": 0}
@@ -114,8 +145,12 @@ def get_stock_advanced_data(stock_dict):
     for sym in stock_dict.keys():
         tickers_to_dl.extend([f"{sym}.TW", f"{sym}.TWO"])
     
+    # 💡 使用時區守門員獲取精確日期區間
+    start_dt, end_dt = get_tw_trading_dates()
+    
     try:
-        batch_data = yf.download(tickers_to_dl, period="4mo", group_by="ticker", progress=False, threads=True)
+        # 改為指定日期區間下載
+        batch_data = yf.download(tickers_to_dl, start=start_dt, end=end_dt, group_by="ticker", progress=False, threads=True)
     except Exception as e:
         return pd.DataFrame(), {}
 
@@ -142,13 +177,17 @@ def get_stock_advanced_data(stock_dict):
             crown = "👑 " if symbol in LEADERS else ""
             display_name = f"{crown}{name} ({symbol})"
 
-            close = hist['Close'].iloc[-1]
-            open_p = hist['Open'].iloc[-1]
-            high_p = hist['High'].iloc[-1]
-            low_p = hist['Low'].iloc[-1]
-            prev_close = hist['Close'].iloc[-2]
+            # 確保提取為純數值，避免 Series
+            close = float(hist['Close'].iloc[-1].item() if isinstance(hist['Close'].iloc[-1], pd.Series) else hist['Close'].iloc[-1])
+            open_p = float(hist['Open'].iloc[-1].item() if isinstance(hist['Open'].iloc[-1], pd.Series) else hist['Open'].iloc[-1])
+            high_p = float(hist['High'].iloc[-1].item() if isinstance(hist['High'].iloc[-1], pd.Series) else hist['High'].iloc[-1])
+            low_p = float(hist['Low'].iloc[-1].item() if isinstance(hist['Low'].iloc[-1], pd.Series) else hist['Low'].iloc[-1])
+            prev_close = float(hist['Close'].iloc[-2].item() if isinstance(hist['Close'].iloc[-2], pd.Series) else hist['Close'].iloc[-2])
+            
             change_pct = ((close - prev_close) / prev_close) * 100
             
+            # 使用 float 以確保運算正常
+            hist['Close'] = hist['Close'].astype(float)
             hist['MA5'] = hist['Close'].rolling(5).mean()
             hist['MA20'] = hist['Close'].rolling(20).mean()
             hist['MA60'] = hist['Close'].rolling(60).mean()
@@ -159,7 +198,9 @@ def get_stock_advanced_data(stock_dict):
             
             price_history_dict[display_name] = hist.tail(60)
 
-            vol_today = hist['Volume'].iloc[-1]
+            # 確保提取為純數值
+            vol_today = float(hist['Volume'].iloc[-1].item() if isinstance(hist['Volume'].iloc[-1], pd.Series) else hist['Volume'].iloc[-1])
+            hist['Volume'] = hist['Volume'].astype(float)
             vol_ma5 = hist['Volume'].rolling(5).mean().iloc[-1]
             
             real_body = abs(close - open_p)
@@ -189,7 +230,7 @@ def get_stock_advanced_data(stock_dict):
                 elif vol_today > vol_ma5 * 1.5: action, action_prio = "💎 跌破月線護盤", 2
                 else: action, action_prio = "🛌 守季線觀察", 8
             elif close > hist['MA5'].iloc[-1] and close > hist['MA20'].iloc[-1]:
-                if close > open_p and vol_today > hist['Volume'].iloc[-2]:
+                if close > open_p and vol_today > float(hist['Volume'].iloc[-2].item() if isinstance(hist['Volume'].iloc[-2], pd.Series) else hist['Volume'].iloc[-2]):
                     if vol_today > vol_ma5 * 1.5 and kd_golden and close > upper_bb: action, action_prio = "🚀 超級進場點", 0
                     elif vol_today > vol_ma5 * 1.5 and kd_golden: action, action_prio = "💰 強力加碼", 1
                     elif kd_golden and vol_today <= vol_ma5 * 1.5: action, action_prio = "➕ 加碼金叉", 3
@@ -224,6 +265,14 @@ def get_stock_advanced_data(stock_dict):
 
 def plot_k_volume(hist_df, name):
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
+    
+    # 確保數值型別為 float
+    hist_df['Open'] = hist_df['Open'].astype(float)
+    hist_df['High'] = hist_df['High'].astype(float)
+    hist_df['Low'] = hist_df['Low'].astype(float)
+    hist_df['Close'] = hist_df['Close'].astype(float)
+    hist_df['Volume'] = hist_df['Volume'].astype(float)
+    
     fig.add_trace(go.Candlestick(x=hist_df.index, open=hist_df['Open'], high=hist_df['High'], low=hist_df['Low'], close=hist_df['Close'], name='K線'), row=1, col=1)
     fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['MA5'], name='5MA', line=dict(color='#FFA500')), row=1, col=1)
     fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['MA20'], name='20MA', line=dict(color='#1E90FF')), row=1, col=1)
@@ -303,6 +352,10 @@ tab1, tab2, tab3 = st.tabs(["首頁：大盤與熱度", "細部題材：技術�
 
 with tab1:
     st.subheader("全球市場溫度計")
+    # 顯示目前抓取的日期區間，方便除錯
+    start_dt, end_dt = get_tw_trading_dates()
+    st.caption(f"📅 資料擷取區間設定：{start_dt} 至 {end_dt}")
+    
     idx_data = get_indices()
     cols = st.columns(len(idx_data))
     for i, (n, d) in enumerate(idx_data.items()):
