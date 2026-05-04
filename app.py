@@ -6,8 +6,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime, timedelta
-import pytz
 
 # ================= 1. 網頁配置 =================
 st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
@@ -16,38 +14,6 @@ st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
 if 'custom_themes' not in st.session_state:
     st.session_state['custom_themes'] = {}
 
-# ================= 1.6 台股時區守門員 =================
-def get_tw_trading_dates():
-    """
-    獲取精確的台股交易日範圍，用來向 Yahoo 要資料。
-    避免時區錯亂抓到未開盤或錯天的舊資料。
-    """
-    tw_tz = pytz.timezone('Asia/Taipei')
-    now_tw = datetime.now(tw_tz)
-    
-    # 計算「最近一個已收盤的交易日」
-    latest_trading_day = now_tw
-    
-    if now_tw.weekday() == 5: # 星期六
-        latest_trading_day = now_tw - timedelta(days=1)
-    elif now_tw.weekday() == 6: # 星期日
-        latest_trading_day = now_tw - timedelta(days=2)
-    elif now_tw.weekday() == 0: # 星期一
-        if now_tw.hour < 14 or (now_tw.hour == 14 and now_tw.minute < 30):
-            # 星期一下午兩點半前，抓上週五的資料
-            latest_trading_day = now_tw - timedelta(days=3)
-    else: # 星期二到五
-        if now_tw.hour < 14 or (now_tw.hour == 14 and now_tw.minute < 30):
-            # 下午兩點半前，抓昨天的資料
-            latest_trading_day = now_tw - timedelta(days=1)
-            
-    # 設定下載的結束時間為「最近交易日」的隔天 (因為 yfinance 的 end date 是不包含的)
-    end_date = (latest_trading_day + timedelta(days=1)).strftime('%Y-%m-%d')
-    # 往前推 4 個月作為開始時間
-    start_date = (latest_trading_day - timedelta(days=120)).strftime('%Y-%m-%d')
-    
-    return start_date, end_date
-
 # ================= 2. 大盤解析區 =================
 DAILY_ANALYSIS = """
 【今日大盤與資金流向分析】
@@ -55,7 +21,7 @@ DAILY_ANALYSIS = """
 建議觀察：1. 是否有新題材在新聞中頻繁出現？ 2. 提防高檔上影線警告，留意低檔下影線護盤。
 """
 
-# ================= 3. 產業題材與龍頭資料庫 (擴編版) =================
+# ================= 3. 產業題材與龍頭資料庫 =================
 BASE_STOCK_DB = {
     "輝達GTC/AI伺服器": {"2330": "台積電", "2317": "鴻海", "2382": "廣達", "3231": "緯創", "2376": "技嘉", "6669": "緯穎", "3706": "神達", "2356": "英業達", "2422": "佳能"},
     "散熱管理/水冷": {"3017": "奇鋐", "3324": "雙鴻", "2421": "建準", "6230": "超眾", "8996": "高力", "3483": "力致", "3338": "泰碩", "3653": "健策"},
@@ -116,18 +82,14 @@ def get_indices():
         "WTI原油": "CL=F"
     }
     
-    # 💡 指數也套用時區守門員
-    start_dt, end_dt = get_tw_trading_dates()
-    
     res = {}
     for name, symbol in indices_dict.items():
         try:
-            hist = yf.download(symbol, start=start_dt, end=end_dt, progress=False)
+            hist = yf.Ticker(symbol).history(period="5d")
             hist = hist.dropna(subset=['Close'])
             if len(hist) >= 2:
-                # 這裡可能會有 Series 的問題，確保取到單一數值
-                close = float(hist['Close'].iloc[-1].item() if isinstance(hist['Close'].iloc[-1], pd.Series) else hist['Close'].iloc[-1])
-                prev = float(hist['Close'].iloc[-2].item() if isinstance(hist['Close'].iloc[-2], pd.Series) else hist['Close'].iloc[-2])
+                close = float(hist['Close'].iloc[-1])
+                prev = float(hist['Close'].iloc[-2])
                 res[name] = {"現價": round(close, 2), "漲跌幅": round((close-prev)/prev*100, 2)}
             else: res[name] = {"現價": 0, "漲跌幅": 0}
         except: res[name] = {"現價": 0, "漲跌幅": 0}
@@ -145,12 +107,9 @@ def get_stock_advanced_data(stock_dict):
     for sym in stock_dict.keys():
         tickers_to_dl.extend([f"{sym}.TW", f"{sym}.TWO"])
     
-    # 💡 使用時區守門員獲取精確日期區間
-    start_dt, end_dt = get_tw_trading_dates()
-    
     try:
-        # 改為指定日期區間下載
-        batch_data = yf.download(tickers_to_dl, start=start_dt, end=end_dt, group_by="ticker", progress=False, threads=True)
+        # 回歸最穩定的 4mo 抓取法，確保抓到最新一筆
+        batch_data = yf.download(tickers_to_dl, period="4mo", group_by="ticker", progress=False, threads=True)
     except Exception as e:
         return pd.DataFrame(), {}
 
@@ -176,17 +135,18 @@ def get_stock_advanced_data(stock_dict):
                 
             crown = "👑 " if symbol in LEADERS else ""
             display_name = f"{crown}{name} ({symbol})"
+            
+            # 💡 抓取這筆資料的「真實日期」，做為照妖鏡防呆
+            last_date_str = hist.index[-1].strftime('%m/%d')
 
-            # 確保提取為純數值，避免 Series
-            close = float(hist['Close'].iloc[-1].item() if isinstance(hist['Close'].iloc[-1], pd.Series) else hist['Close'].iloc[-1])
-            open_p = float(hist['Open'].iloc[-1].item() if isinstance(hist['Open'].iloc[-1], pd.Series) else hist['Open'].iloc[-1])
-            high_p = float(hist['High'].iloc[-1].item() if isinstance(hist['High'].iloc[-1], pd.Series) else hist['High'].iloc[-1])
-            low_p = float(hist['Low'].iloc[-1].item() if isinstance(hist['Low'].iloc[-1], pd.Series) else hist['Low'].iloc[-1])
-            prev_close = float(hist['Close'].iloc[-2].item() if isinstance(hist['Close'].iloc[-2], pd.Series) else hist['Close'].iloc[-2])
+            close = float(hist['Close'].iloc[-1])
+            open_p = float(hist['Open'].iloc[-1])
+            high_p = float(hist['High'].iloc[-1])
+            low_p = float(hist['Low'].iloc[-1])
+            prev_close = float(hist['Close'].iloc[-2])
             
             change_pct = ((close - prev_close) / prev_close) * 100
             
-            # 使用 float 以確保運算正常
             hist['Close'] = hist['Close'].astype(float)
             hist['MA5'] = hist['Close'].rolling(5).mean()
             hist['MA20'] = hist['Close'].rolling(20).mean()
@@ -198,8 +158,7 @@ def get_stock_advanced_data(stock_dict):
             
             price_history_dict[display_name] = hist.tail(60)
 
-            # 確保提取為純數值
-            vol_today = float(hist['Volume'].iloc[-1].item() if isinstance(hist['Volume'].iloc[-1], pd.Series) else hist['Volume'].iloc[-1])
+            vol_today = float(hist['Volume'].iloc[-1])
             hist['Volume'] = hist['Volume'].astype(float)
             vol_ma5 = hist['Volume'].rolling(5).mean().iloc[-1]
             
@@ -230,7 +189,7 @@ def get_stock_advanced_data(stock_dict):
                 elif vol_today > vol_ma5 * 1.5: action, action_prio = "💎 跌破月線護盤", 2
                 else: action, action_prio = "🛌 守季線觀察", 8
             elif close > hist['MA5'].iloc[-1] and close > hist['MA20'].iloc[-1]:
-                if close > open_p and vol_today > float(hist['Volume'].iloc[-2].item() if isinstance(hist['Volume'].iloc[-2], pd.Series) else hist['Volume'].iloc[-2]):
+                if close > open_p and vol_today > float(hist['Volume'].iloc[-2]):
                     if vol_today > vol_ma5 * 1.5 and kd_golden and close > upper_bb: action, action_prio = "🚀 超級進場點", 0
                     elif vol_today > vol_ma5 * 1.5 and kd_golden: action, action_prio = "💰 強力加碼", 1
                     elif kd_golden and vol_today <= vol_ma5 * 1.5: action, action_prio = "➕ 加碼金叉", 3
@@ -249,6 +208,7 @@ def get_stock_advanced_data(stock_dict):
             is_potential = (close > hist['MA20'].iloc[-1]) and (bb_width < 0.15) and (obv.iloc[-1] > obv.rolling(10).mean().iloc[-1])
 
             data_list.append({
+                "資料日期": last_date_str,  # 💡 加入資料日期防呆
                 "代號": symbol, 
                 "所屬題材": SYMBOL_TO_THEME.get(symbol, "📌 自選股"),
                 "指標股": display_name, 
@@ -266,7 +226,6 @@ def get_stock_advanced_data(stock_dict):
 def plot_k_volume(hist_df, name):
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
     
-    # 確保數值型別為 float
     hist_df['Open'] = hist_df['Open'].astype(float)
     hist_df['High'] = hist_df['High'].astype(float)
     hist_df['Low'] = hist_df['Low'].astype(float)
@@ -299,7 +258,6 @@ def color_pct(val):
 # ================= 5. UI 介面 =================
 st.title("台股題材動態觀測站")
 
-# 🛠️ 移到側邊欄最上方：專屬題材編輯器
 st.sidebar.header("🛠️ 新增自定義題材")
 st.sidebar.caption("建立的題材將自動加入總表與排行榜！")
 custom_theme_name = st.sidebar.text_input("題材名稱 (例: 📰 散熱)", "")
@@ -328,12 +286,10 @@ if st.session_state['custom_themes']:
 
 st.sidebar.markdown("---")
 
-# 側邊欄：族群選擇
 st.sidebar.header("盤面族群追蹤")
 sel_theme = st.sidebar.selectbox("請選擇族群", list(STOCK_DB.keys()))
 
 st.sidebar.markdown("---")
-# 💼 我的持股追蹤 (單純個股健檢)
 st.sidebar.header("💼 我的持股健檢")
 my_holdings_input = st.sidebar.text_input("輸入股票代號 (如: 8064, 2330)", "")
 my_holdings_dict = {}
@@ -352,10 +308,7 @@ tab1, tab2, tab3 = st.tabs(["首頁：大盤與熱度", "細部題材：技術�
 
 with tab1:
     st.subheader("全球市場溫度計")
-    # 顯示目前抓取的日期區間，方便除錯
-    start_dt, end_dt = get_tw_trading_dates()
-    st.caption(f"📅 資料擷取區間設定：{start_dt} 至 {end_dt}")
-    
+    st.caption("💡 備註：台股最新報價若有延遲，係因 Yahoo API 更新排程所致。")
     idx_data = get_indices()
     cols = st.columns(len(idx_data))
     for i, (n, d) in enumerate(idx_data.items()):
@@ -387,7 +340,8 @@ with tab2:
     with st.spinner("極速載入中..."):
         df_f, hist_all = get_stock_advanced_data(STOCK_DB[sel_theme])
         if not df_f.empty:
-            st.dataframe(df_f[['指標股', '漲跌幅(%)', '現價', '籌碼動能']].style.map(color_pct, subset=['漲跌幅(%)']), use_container_width=True)
+            # 💡 總表加入「資料日期」欄位
+            st.dataframe(df_f[['資料日期', '指標股', '漲跌幅(%)', '現價', '籌碼動能']].style.map(color_pct, subset=['漲跌幅(%)']), use_container_width=True)
             st.markdown("---")
             target = st.selectbox("查看 K 線與成交量", df_f['指標股'].tolist(), key="t2")
             if target in hist_all: st.plotly_chart(plot_k_volume(hist_all[target], target), use_container_width=True, key=f"chart_tab2_{target}")
@@ -414,7 +368,8 @@ with tab3:
                     df_my = df_a[df_a['代號'].isin(my_symbols)]
                     
                     if not df_my.empty:
-                        st.dataframe(df_my[['指標股', '漲跌幅(%)', '現價', '波段策略', '籌碼動能']].reset_index(drop=True).style.map(color_strategy, subset=['波段策略']).map(color_pct, subset=['漲跌幅(%)']), height=200, use_container_width=True)
+                        # 💡 總表加入「資料日期」欄位
+                        st.dataframe(df_my[['資料日期', '指標股', '漲跌幅(%)', '現價', '波段策略', '籌碼動能']].reset_index(drop=True).style.map(color_strategy, subset=['波段策略']).map(color_pct, subset=['漲跌幅(%)']), height=200, use_container_width=True)
                     else:
                         st.warning("找不到輸入的股票資料，請確認代號是否正確。")
                 with col_t2:
@@ -435,7 +390,8 @@ with tab3:
             st.markdown("---")
             st.markdown("### 全市場波段選股總表")
             df_s = df_a.sort_values("策略權重").drop(columns=['策略權重'])
-            st.dataframe(df_s.style.map(color_strategy, subset=['波段策略', '黑馬潛力']).map(color_pct, subset=['漲跌幅(%)']), height=500, use_container_width=True)
+            # 💡 總表加入「資料日期」欄位，讓妳一眼看穿 Yahoo 有沒有偷懶
+            st.dataframe(df_s[['資料日期', '所屬題材', '指標股', '漲跌幅(%)', '現價', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略', '黑馬潛力']).map(color_pct, subset=['漲跌幅(%)']), height=500, use_container_width=True)
             
             st.markdown("---")
             st.subheader("全域個股線型觀測")
