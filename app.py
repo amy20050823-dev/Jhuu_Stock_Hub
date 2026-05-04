@@ -10,6 +10,11 @@ from bs4 import BeautifulSoup
 # ================= 1. 網頁配置 =================
 st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
 
+# ================= 1.5 初始化動態題材庫 Session State =================
+# 這是讓妳新增的題材能「永久存留」的關鍵
+if 'custom_themes' not in st.session_state:
+    st.session_state['custom_themes'] = {}
+
 # ================= 2. 大盤解析區 =================
 DAILY_ANALYSIS = """
 【今日大盤與資金流向分析】
@@ -17,38 +22,32 @@ DAILY_ANALYSIS = """
 建議觀察：1. 是否有新題材在新聞中頻繁出現？ 2. 提防高檔上影線警告，留意低檔下影線護盤。
 """
 
-# ================= 3. 產業題材與龍頭資料庫 (🔥 完美修復版) =================
-STOCK_DB = {
-    # --- AI 與伺服器核心 ---
+# ================= 3. 產業題材與龍頭資料庫 (擴編版) =================
+BASE_STOCK_DB = {
     "輝達GTC/AI伺服器": {"2330": "台積電", "2317": "鴻海", "2382": "廣達", "3231": "緯創", "2376": "技嘉", "6669": "緯穎", "3706": "神達", "2356": "英業達", "2422": "佳能"},
     "散熱管理/水冷": {"3017": "奇鋐", "3324": "雙鴻", "2421": "建準", "6230": "超眾", "8996": "高力", "3483": "力致", "3338": "泰碩", "3653": "健策"},
     "電源與BBU": {"2308": "台達電", "2301": "光寶科", "6409": "旭隼", "6121": "新普", "3211": "順達", "3323": "加百裕", "6781": "AES-KY", "2324": "仁寶"},
-    
-    # --- 半導體與設備 ---
     "CoWoS/先進封裝": {"3131": "弘塑", "6187": "萬潤", "5443": "均豪", "6640": "均華", "6196": "帆宣", "3583": "辛耘", "2338": "光罩", "6515": "穎崴"},
-    "半導體化學與耗材": {"4755": "三福化", "4770": "崇越", "1773": "勝一", "3010": "華立", "6223": "旺矽", "6217": "中探針", "1560": "研伸", "1558": "伸興"},
+    "半導體化學與耗材": {"5434": "崇越", "4770": "上品", "4755": "三福化", "1773": "勝一", "3010": "華立", "6223": "旺矽", "6217": "中探針", "1560": "研伸", "1558": "伸興"},
     "廠務工程與無塵室": {"2404": "漢唐", "3402": "漢科", "6139": "亞翔", "5536": "聖暉*", "2493": "揚博", "6117": "迎廣"},
     "ASIC/IP矽智財": {"3443": "智原", "3661": "世芯-KY", "6643": "M31", "6533": "晶心科", "3529": "力旺", "3228": "金麗科", "6531": "愛普*"},
     "ABF載板/先進基板": {"3037": "欣興", "8046": "南電", "3189": "景碩", "8050": "廣積"},
-    
-    # --- 網通與光通訊 ---
     "CPO/矽光子": {"4979": "華星光", "3450": "聯鈞", "3081": "聯亞", "3363": "上詮", "6442": "光聖", "6451": "訊芯-KY", "3163": "波若威", "4908": "前鼎", "3234": "光環"},
     "網通/石英元件": {"3042": "晶技", "3221": "台嘉碩", "8182": "加高", "2484": "希華", "3596": "智易", "5388": "中磊", "3380": "明泰", "6285": "啟碁"},
     "低軌衛星": {"2313": "華通", "3491": "昇達科", "6271": "同欣電", "3466": "致振", "3152": "璟德"},
     "高速傳輸/線材": {"4966": "譜瑞-KY", "5269": "祥碩", "6756": "威鋒電子", "6661": "威健", "6653": "嘉基", "3665": "貿聯-KY", "3023": "信邦", "6102": "倚強科"},
-    
-    # --- 終端應用與零組件 ---
     "AI機器人/自動化": {"2359": "所羅門", "2365": "昆盈", "6414": "樺漢", "8374": "羅昇", "4510": "高鋒", "1590": "亞德客-KY", "2049": "上銀", "4545": "銘鈺"},
     "AI PC/工業電腦": {"2357": "華碩", "2353": "宏碁", "2395": "研華", "6245": "立端", "8114": "振樺電", "6206": "飛捷"},
     "PCB/銅箔基板": {"2383": "台光電", "6213": "聯茂", "6274": "台燿", "2368": "金像電", "5469": "瀚宇博", "6153": "嘉聯益"},
     "記憶體與模組": {"2408": "南亞科", "2344": "華邦電", "8299": "群聯", "3260": "威剛", "2451": "創見", "4967": "十銓"}, 
-    "被動元件": {"2327": "國巨", "2492": "華新科", "3026": "禾伸堂", "6127": "九暘", "2478": "大毅"}, # 修正了這裡的語法錯誤
+    "被動元件": {"2327": "國巨", "2492": "華新科", "3026": "禾伸堂", "6127": "九暘", "2478": "大毅"},
     "消費性IC/MCU": {"2454": "聯發科", "4919": "盛群", "2337": "旺宏", "3034": "聯詠", "2401": "凌陽", "4952": "凌通"},
-    
-    # --- 傳產與基礎建設 ---
     "重電與能源轉型": {"1513": "中興電", "1519": "華城", "1503": "士電", "1514": "亞力", "1605": "華新", "1515": "力山", "6806": "森崴能源"},
     "航運與航空": {"2603": "長榮", "2609": "陽明", "2615": "萬海", "2618": "長榮航", "2610": "華航", "2634": "漢翔"}
 }
+
+# 合併內建庫與使用者自定義的題材庫
+STOCK_DB = {**BASE_STOCK_DB, **st.session_state['custom_themes']}
 
 SYMBOL_TO_THEME = {}
 for theme_full, stocks in STOCK_DB.items():
@@ -153,7 +152,6 @@ def get_stock_advanced_data(stock_dict):
             vol_today = hist['Volume'].iloc[-1]
             vol_ma5 = hist['Volume'].rolling(5).mean().iloc[-1]
             
-            # 💡 V40 核心：分離主策略與附屬標籤，並套用「穩健型波段客(方案B)」參數
             real_body = abs(close - open_p)
             real_body = real_body if real_body > 0 else 0.001
             total_length = high_p - low_p
@@ -175,7 +173,6 @@ def get_stock_advanced_data(stock_dict):
             action = "⚪ 盤整觀望"
             action_prio = 99
             
-            # 核心策略判定
             if k_s.iloc[-1] > 80 and close < hist['MA5'].iloc[-1]: action, action_prio = "💸 獲利了結", 6
             elif close < hist['MA20'].iloc[-1]: 
                 if close < hist['MA60'].iloc[-1] or vol_today < vol_ma5 * 0.7: action, action_prio = "🛑 賣出停損", 5
@@ -191,7 +188,6 @@ def get_stock_advanced_data(stock_dict):
                 elif close < open_p: action, action_prio = "👀 收黑開高走低", 10
             elif close >= hist['MA20'].iloc[-1]: action, action_prio = "🟢 持股", 9
 
-            # 🛡️ 附加標籤：將影線警告附加於主策略之後
             display_action = action
             if is_lightning_rod:
                 display_action = f"{action} (⚡上影線警告)"
@@ -244,12 +240,45 @@ def color_pct(val):
 # ================= 5. UI 介面 =================
 st.title("台股題材動態觀測站")
 
+# 側邊欄：族群選擇
 st.sidebar.header("盤面族群追蹤")
 sel_theme = st.sidebar.selectbox("請選擇族群", list(STOCK_DB.keys()))
 
 st.sidebar.markdown("---")
-st.sidebar.header("💼 我的持股追蹤")
-my_holdings_input = st.sidebar.text_input("輸入股票代號 (用逗號分隔，如: 8064, 2330)", "")
+# 🛠️ 殺手級功能：專屬題材編輯器
+st.sidebar.header("🛠️ 新增自定義題材")
+st.sidebar.caption("建立的題材將自動加入總表與排行榜！")
+custom_theme_name = st.sidebar.text_input("題材名稱 (例: 📰 玻纖布)", "")
+custom_theme_stocks = st.sidebar.text_input("股票代號 (例: 1815, 5340)", "")
+
+if st.sidebar.button("加入 / 更新題材庫"):
+    if custom_theme_name and custom_theme_stocks:
+        # 簡單解析股票代號，暫不處理股票名稱
+        stocks_dict = {}
+        for s in custom_theme_stocks.split(','):
+            s = s.strip()
+            if s:
+                stocks_dict[s] = f"自選_{s}"
+        
+        # 存入 Session State 確保不消失
+        st.session_state['custom_themes'][custom_theme_name] = stocks_dict
+        st.sidebar.success(f"已成功加入 {custom_theme_name}！請點擊下方強制刷新。")
+    else:
+        st.sidebar.warning("請填寫題材名稱與代號！")
+
+# 顯示目前已建立的自訂題材
+if st.session_state['custom_themes']:
+    st.sidebar.markdown("**已建檔自定義題材：**")
+    for t_name in st.session_state['custom_themes'].keys():
+        st.sidebar.markdown(f"- {t_name}")
+    if st.sidebar.button("清除所有自定義題材"):
+        st.session_state['custom_themes'] = {}
+        st.rerun()
+
+st.sidebar.markdown("---")
+# 💼 我的持股追蹤 (單純個股健檢)
+st.sidebar.header("💼 我的持股健檢")
+my_holdings_input = st.sidebar.text_input("輸入股票代號 (如: 8064, 2330)", "")
 my_holdings_dict = {}
 if my_holdings_input:
     for s in my_holdings_input.split(','):
@@ -258,7 +287,7 @@ if my_holdings_input:
             my_holdings_dict[s] = f"持股 {s}"
 
 st.sidebar.markdown("---")
-if st.sidebar.button("強制刷新"):
+if st.sidebar.button("強制刷新 (載入新題材)"):
     st.cache_data.clear()
     st.rerun()
 
@@ -275,20 +304,20 @@ with tab1:
     col_l, col_r = st.columns([1.5, 1])
     with col_l:
         st.subheader("今日熱門排行")
-        with st.spinner("極速批次載入資料中..."):
+        with st.spinner("極速批次載入資料中 (含自定義題材)..."):
             theme_res = []
             for th, stks in STOCK_DB.items():
                 df_t, _ = get_stock_advanced_data(stks)
                 if not df_t.empty: theme_res.append({"題材": th, "漲跌(%)": round(df_t["漲跌幅(%)"].mean(), 2)})
             if theme_res:
-                st.dataframe(pd.DataFrame(theme_res).sort_values("漲跌(%)", ascending=False), height=300, use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(theme_res).sort_values("漲跌(%)", ascending=False), height=400, use_container_width=True, hide_index=True)
             else:
                 st.error("⚠️ 資料擷取中，請稍候再點擊強制刷新。")
             
     with col_r:
         st.subheader("題材偵察機 (盤面新聞)")
         news_list = get_market_news()
-        with st.container(height=300):
+        with st.container(height=400):
             for n in news_list:
                 st.markdown(f"🔗 [{n['title']}]({n['link']})")
 
@@ -312,7 +341,7 @@ with tab3:
     if my_holdings_dict:
         all_flat.update(my_holdings_dict)
     
-    with st.spinner("全域極速掃描中 (資料庫已擴編至200檔)..."):
+    with st.spinner("全域極速掃描中..."):
         df_a, hist_a = get_stock_advanced_data(all_flat)
         
         if not df_a.empty:
