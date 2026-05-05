@@ -18,15 +18,11 @@ if 'custom_themes' not in st.session_state:
 
 # ================= 1.6 自動抓取中文股名小爬蟲 =================
 def get_tw_stock_name(symbol):
-    """
-    透過 Yahoo 股市網頁，自動把代號轉換成中文名稱 (例如: 2485 -> 兆赫)
-    """
     try:
         url = f"https://tw.stock.yahoo.com/quote/{symbol}"
         headers = {'User-Agent': 'Mozilla/5.0'}
         res = requests.get(url, headers=headers, timeout=3)
         soup = BeautifulSoup(res.text, 'html.parser')
-        # Yahoo 股市的標題通常是 "兆赫(2485) - 股價走勢..."
         title = soup.find('title').text
         name = title.split('(')[0].strip()
         return name if name else f"自選_{symbol}"
@@ -67,7 +63,6 @@ BASE_STOCK_DB = {
     "航運與航空": {"2603": "長榮", "2609": "陽明", "2615": "萬海", "2618": "長榮航", "2610": "華航", "2634": "漢翔"}
 }
 
-# 💡 結合基礎資料庫與自定義題材庫
 STOCK_DB = {**BASE_STOCK_DB, **st.session_state['custom_themes']}
 
 SYMBOL_TO_THEME = {}
@@ -128,47 +123,44 @@ def get_stock_advanced_data(stock_dict, vip_symbols=[]):
         tickers_to_dl.extend([f"{sym}.TW", f"{sym}.TWO"])
     
     try:
-        batch_data = yf.download(tickers_to_dl, period="4mo", group_by="ticker", progress=False, threads=True)
+        batch_data_long = yf.download(tickers_to_dl, period="4mo", group_by="ticker", progress=False, threads=True)
+        batch_data_short = yf.download(tickers_to_dl, period="5d", group_by="ticker", progress=False, threads=True)
     except Exception as e:
         return pd.DataFrame(), {}
 
     for symbol, name in stock_dict.items():
         try:
-            hist = pd.DataFrame()
-            tkr_suffix = ""
+            hist_long = pd.DataFrame()
+            hist_short = pd.DataFrame()
+            
             for suffix in [".TW", ".TWO"]:
                 tkr = f"{symbol}{suffix}"
-                if isinstance(batch_data.columns, pd.MultiIndex):
-                    if tkr in batch_data.columns.get_level_values(0):
-                        temp_hist = batch_data[tkr].copy()
-                        temp_hist = temp_hist.dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low']) 
-                        if len(temp_hist) >= 60:
-                            hist = temp_hist
-                            tkr_suffix = tkr
-                            break
+                if isinstance(batch_data_long.columns, pd.MultiIndex):
+                    if tkr in batch_data_long.columns.get_level_values(0):
+                        temp_hist = batch_data_long[tkr].copy().dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low']) 
+                        if len(temp_hist) > 0: hist_long = temp_hist
                 else:
-                    temp_hist = batch_data.copy().dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low'])
-                    if len(temp_hist) >= 60:
-                        hist = temp_hist
-                        tkr_suffix = tkr
-                        break
+                    temp_hist = batch_data_long.copy().dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low'])
+                    if len(temp_hist) > 0: hist_long = temp_hist
+                
+                if isinstance(batch_data_short.columns, pd.MultiIndex):
+                    if tkr in batch_data_short.columns.get_level_values(0):
+                        temp_hist_s = batch_data_short[tkr].copy().dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low']) 
+                        if len(temp_hist_s) > 0: hist_short = temp_hist_s
+                else:
+                    temp_hist_s = batch_data_short.copy().dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low'])
+                    if len(temp_hist_s) > 0: hist_short = temp_hist_s
+                
+                if not hist_long.empty: break
             
-            if hist.empty or len(hist) < 60: continue
+            if hist_long.empty or len(hist_long) < 40: continue
 
-            # 👑 VIP 強制縫合技術：只為特權股票抓取最新一天！
-            if symbol in vip_symbols:
-                try:
-                    latest_data = yf.Ticker(tkr_suffix).history(period="1d")
-                    if not latest_data.empty:
-                        last_hist_date = hist.index[-1].date()
-                        latest_data_date = latest_data.index[-1].date()
-                        
-                        if latest_data_date > last_hist_date:
-                            latest_row = latest_data[['Open', 'High', 'Low', 'Close', 'Volume']]
-                            hist = pd.concat([hist, latest_row])
-                            hist = hist[~hist.index.duplicated(keep='last')]
-                except:
-                    pass 
+            if not hist_short.empty:
+                hist = pd.concat([hist_long, hist_short])
+                hist = hist[~hist.index.duplicated(keep='last')]
+                hist = hist.sort_index()
+            else:
+                hist = hist_long
 
             crown = "👑 " if symbol in LEADERS else ""
             display_name = f"{crown}{name} ({symbol})"
@@ -301,17 +293,25 @@ custom_theme_stocks = st.sidebar.text_input("股票代號 (例: 2485, 3324)", ""
 
 if st.sidebar.button("加入 / 更新題材庫"):
     if custom_theme_name and custom_theme_stocks:
-        with st.spinner("自動抓取股票名稱中..."):
-            stocks_dict = {}
+        with st.spinner("自動合併與抓取股票名稱中..."):
+            # 💡 破解覆蓋 Bug：先抓出「已經存在」的股票清單
+            current_stocks = {}
+            if custom_theme_name in BASE_STOCK_DB:
+                current_stocks.update(BASE_STOCK_DB[custom_theme_name])
+            if custom_theme_name in st.session_state['custom_themes']:
+                current_stocks.update(st.session_state['custom_themes'][custom_theme_name])
+                
+            # 將新輸入的股票追加進去
             for s in custom_theme_stocks.split(','):
                 s = s.strip()
                 if s:
-                    # 💡 呼叫爬蟲自動抓名字
                     stock_name = get_tw_stock_name(s)
-                    stocks_dict[s] = stock_name
+                    current_stocks[s] = stock_name
             
-            st.session_state['custom_themes'][custom_theme_name] = stocks_dict
-        st.sidebar.success(f"已成功加入 {custom_theme_name}！請點擊下方強制刷新。")
+            # 存回系統，這樣就完成合併了！
+            st.session_state['custom_themes'][custom_theme_name] = current_stocks
+            
+        st.sidebar.success(f"已成功擴充 {custom_theme_name}！請點擊下方強制刷新。")
     else:
         st.sidebar.warning("請填寫題材名稱與代號！")
 
@@ -332,28 +332,24 @@ st.sidebar.markdown("---")
 st.sidebar.header("💼 我的持股健檢")
 my_holdings_input = st.sidebar.text_input("輸入股票代號 (如: 8064, 2485)", "")
 
-# 💡 統整所有需要 VIP 特權縫合的股票清單！
-vip_symbol_list = []
 my_holdings_dict = {}
+vip_symbol_list = []
 
 if my_holdings_input:
     for s in my_holdings_input.split(','):
         s = s.strip()
         if s:
-            # 去抓持股的中文名字，讓顯示更漂亮
             name = get_tw_stock_name(s)
             my_holdings_dict[s] = f"持股 {name}"
             vip_symbol_list.append(s)
 
-# 把使用者自己建檔的題材股票，也通通加入 VIP 縫合特權名單！
 for theme, stocks in st.session_state['custom_themes'].items():
     vip_symbol_list.extend(list(stocks.keys()))
     
-# 確保沒有重複的代號
 vip_symbol_list = list(set(vip_symbol_list))
 
 st.sidebar.markdown("---")
-if st.sidebar.button("強制刷新 (載入新題材)"):
+if st.sidebar.button("強制刷新 (載入最新資料)"):
     st.cache_data.clear()
     st.rerun()
 
@@ -361,20 +357,19 @@ tab1, tab2, tab3 = st.tabs(["首頁：大盤與熱度", "細部題材：技術�
 
 with tab1:
     st.subheader("全球市場溫度計")
-    st.caption("💡 備註：Yahoo API 歷史報價若有延遲，可將個股加入「我的持股」或「自定義題材」啟動 VIP 強制更新。")
+    st.caption("🚀 全域自動縫合引擎已啟動：自動破解 Yahoo 歷史資料延遲，確保掃描最新 K 線！")
     idx_data = get_indices()
     cols = st.columns(len(idx_data))
     for i, (n, d) in enumerate(idx_data.items()):
-        cols[i].metric(n, d["現價"], f"{d['漲跌幅']}%")
+        cols[i].metric(n, d["現價"], f"{d['涨跌幅']}%")
     
     st.markdown("---")
     col_l, col_r = st.columns([1.5, 1])
     with col_l:
         st.subheader("今日熱門排行")
-        with st.spinner("極速批次載入資料中 (含自定義題材)..."):
+        with st.spinner("極速批次載入與雙軌分析中..."):
             theme_res = []
             for th, stks in STOCK_DB.items():
-                # 這裡單純看題材平均，不需要縫合以免拖慢速度
                 df_t, _ = get_stock_advanced_data(stks)
                 if not df_t.empty: theme_res.append({"題材": th, "漲跌(%)": round(df_t["漲跌幅(%)"].mean(), 2)})
             if theme_res:
@@ -392,7 +387,6 @@ with tab1:
 with tab2:
     st.subheader(f"{sel_theme} - 技術與籌碼分析")
     with st.spinner("極速載入中..."):
-        # 題材區也套用 VIP 特權，讓自定義題材能正確顯示
         df_f, hist_all = get_stock_advanced_data(STOCK_DB[sel_theme], vip_symbols=vip_symbol_list)
         if not df_f.empty:
             st.dataframe(df_f[['資料日期', '指標股', '漲跌幅(%)', '現價', '籌碼動能']].style.map(color_pct, subset=['漲跌幅(%)']), use_container_width=True)
@@ -410,15 +404,14 @@ with tab3:
     if my_holdings_dict:
         all_flat.update(my_holdings_dict)
     
-    with st.spinner("全域極速掃描中 (啟動VIP縫合通道)..."):
-        # 💡 將包含自定義題材的 VIP 名單傳遞進去
+    with st.spinner("🚀 全域自動縫合引擎掃描中...這會將全市場 200 檔股票強制更新至最新日線..."):
         df_a, hist_a = get_stock_advanced_data(all_flat, vip_symbols=vip_symbol_list)
         
         if not df_a.empty:
             if my_holdings_dict:
                 col_t1, col_t2 = st.columns(2)
                 with col_t1:
-                    st.markdown("### 💼 我的持股健檢 (👑 VIP 即時縫合)")
+                    st.markdown("### 💼 我的持股健檢")
                     my_symbols = list(my_holdings_dict.keys())
                     df_my = df_a[df_a['代號'].isin(my_symbols)]
                     
