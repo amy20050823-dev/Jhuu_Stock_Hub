@@ -132,16 +132,21 @@ def get_stock_advanced_data(stock_dict, vip_symbols=[]):
         try:
             hist_long = pd.DataFrame()
             hist_short = pd.DataFrame()
+            tkr_suffix = ""
             
             for suffix in [".TW", ".TWO"]:
                 tkr = f"{symbol}{suffix}"
                 if isinstance(batch_data_long.columns, pd.MultiIndex):
                     if tkr in batch_data_long.columns.get_level_values(0):
                         temp_hist = batch_data_long[tkr].copy().dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low']) 
-                        if len(temp_hist) > 0: hist_long = temp_hist
+                        if len(temp_hist) > 0: 
+                            hist_long = temp_hist
+                            tkr_suffix = tkr
                 else:
                     temp_hist = batch_data_long.copy().dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low'])
-                    if len(temp_hist) > 0: hist_long = temp_hist
+                    if len(temp_hist) > 0: 
+                        hist_long = temp_hist
+                        tkr_suffix = tkr
                 
                 if isinstance(batch_data_short.columns, pd.MultiIndex):
                     if tkr in batch_data_short.columns.get_level_values(0):
@@ -153,8 +158,28 @@ def get_stock_advanced_data(stock_dict, vip_symbols=[]):
                 
                 if not hist_long.empty: break
             
+            # 🚨 破解 Yahoo 漏圖 Bug：VIP 獨立救援通道！
+            # 如果發現 Yahoo 批次下載把這檔股票偷偷丟掉了，而且它是使用者的持股，立刻單獨發射請求去抓！
+            if (hist_long.empty or len(hist_long) < 40) and (symbol in vip_symbols):
+                for suffix in [".TW", ".TWO"]:
+                    try:
+                        tkr = f"{symbol}{suffix}"
+                        rescue_data = yf.Ticker(tkr).history(period="4mo")
+                        if not rescue_data.empty and len(rescue_data) >= 40:
+                            hist_long = rescue_data.dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low'])
+                            tkr_suffix = tkr
+                            # 順便抓最新短線
+                            rescue_short = yf.Ticker(tkr).history(period="5d")
+                            if not rescue_short.empty:
+                                hist_short = rescue_short.dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low'])
+                            break # 抓到就跳出
+                    except:
+                        pass
+            
+            # 如果連獨立救援都失敗，那可能真的是該檔股票暫停交易或下市了
             if hist_long.empty or len(hist_long) < 40: continue
 
+            # 短線最新資料縫合
             if not hist_short.empty:
                 hist = pd.concat([hist_long, hist_short])
                 hist = hist[~hist.index.duplicated(keep='last')]
@@ -327,12 +352,13 @@ sel_theme = st.sidebar.selectbox("請選擇族群", list(STOCK_DB.keys()))
 
 st.sidebar.markdown("---")
 st.sidebar.header("💼 我的持股健檢")
-my_holdings_input = st.sidebar.text_input("輸入股票代號 (如: 8064, 2485)", "")
+my_holdings_input = st.sidebar.text_input("輸入股票代號 (如: 8064, 5433)", "")
 
 my_holdings_dict = {}
 vip_symbol_list = []
 
 if my_holdings_input:
+    # 逗號結尾造成的空字串會被這裡過濾掉，十分安全
     for s in my_holdings_input.split(','):
         s = s.strip()
         if s:
@@ -358,7 +384,6 @@ with tab1:
     idx_data = get_indices()
     cols = st.columns(len(idx_data))
     for i, (n, d) in enumerate(idx_data.items()):
-        # 修正了簡體字的打字失誤，確保使用繁體 漲跌幅
         cols[i].metric(n, d["現價"], f"{d['漲跌幅']}%")
     
     st.markdown("---")
