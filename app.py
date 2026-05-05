@@ -294,21 +294,18 @@ custom_theme_stocks = st.sidebar.text_input("股票代號 (例: 2485, 3324)", ""
 if st.sidebar.button("加入 / 更新題材庫"):
     if custom_theme_name and custom_theme_stocks:
         with st.spinner("自動合併與抓取股票名稱中..."):
-            # 💡 破解覆蓋 Bug：先抓出「已經存在」的股票清單
             current_stocks = {}
             if custom_theme_name in BASE_STOCK_DB:
                 current_stocks.update(BASE_STOCK_DB[custom_theme_name])
             if custom_theme_name in st.session_state['custom_themes']:
                 current_stocks.update(st.session_state['custom_themes'][custom_theme_name])
                 
-            # 將新輸入的股票追加進去
             for s in custom_theme_stocks.split(','):
                 s = s.strip()
                 if s:
                     stock_name = get_tw_stock_name(s)
                     current_stocks[s] = stock_name
             
-            # 存回系統，這樣就完成合併了！
             st.session_state['custom_themes'][custom_theme_name] = current_stocks
             
         st.sidebar.success(f"已成功擴充 {custom_theme_name}！請點擊下方強制刷新。")
@@ -361,7 +358,8 @@ with tab1:
     idx_data = get_indices()
     cols = st.columns(len(idx_data))
     for i, (n, d) in enumerate(idx_data.items()):
-        cols[i].metric(n, d["現價"], f"{d['涨跌幅']}%")
+        # 修正了簡體字的打字失誤，確保使用繁體 漲跌幅
+        cols[i].metric(n, d["現價"], f"{d['漲跌幅']}%")
     
     st.markdown("---")
     col_l, col_r = st.columns([1.5, 1])
