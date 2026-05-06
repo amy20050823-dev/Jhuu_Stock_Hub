@@ -84,7 +84,6 @@ def get_indices():
     res = {}
     for name, symbol in indices_dict.items():
         try:
-            # 💡 破解 Yahoo 對大盤短線的抽風 Bug，強迫抓取 1 個月的歷史資料
             hist = yf.Ticker(symbol).history(period="1mo")
             hist = hist.dropna(subset=['Close'])
             if len(hist) >= 2:
@@ -137,7 +136,7 @@ def get_stock_advanced_data(stock_dict, vip_symbols=[]):
                 
                 if not hist_long.empty: break
             
-            if (hist_long.empty or len(hist_long) < 60) and (symbol in vip_symbols):
+            if (hist_long.empty or len(hist_long) < 40) and (symbol in vip_symbols):
                 for suffix in [".TW", ".TWO"]:
                     try:
                         tkr = f"{symbol}{suffix}"
@@ -294,7 +293,7 @@ def color_pct(val):
     return ''
 
 # ================= 5. UI 介面 =================
-st.title("台股題材動態觀測站 V53")
+st.title("台股題材動態觀測站 V54")
 
 st.sidebar.header("🛠️ 新增自定義題材")
 custom_theme_name = st.sidebar.text_input("題材名稱 (例: 📰 低軌衛星)", "")
@@ -344,7 +343,13 @@ with tab1:
         for th, stks in STOCK_DB.items():
             df_t, _ = get_stock_advanced_data(stks)
             if not df_t.empty: theme_res.append({"題材": th, "漲跌(%)": round(df_t["漲跌幅(%)"].mean(), 2)})
-        st.dataframe(pd.DataFrame(theme_res).sort_values("漲跌(%)", ascending=False), height=400, use_container_width=True, hide_index=True)
+        
+        # 💡 V54 修復區：加入防呆機制，避免 Yahoo 沒資料時去排序空表格
+        if theme_res:
+            st.dataframe(pd.DataFrame(theme_res).sort_values("漲跌(%)", ascending=False), height=400, use_container_width=True, hide_index=True)
+        else:
+            st.warning("⚠️ Yahoo API 暫時無回應，這可能是短暫的連線阻擋，請稍後點擊強制刷新。")
+
     with col_r:
         st.subheader("題材偵察機 (盤面新聞)")
         news_list = get_market_news()
@@ -362,7 +367,7 @@ with tab3:
     for th, stks in STOCK_DB.items(): all_flat.update(stks)
     if my_holdings_dict: all_flat.update(my_holdings_dict)
     
-    with st.spinner("🚀 終極演算法 V53 掃描中..."):
+    with st.spinner("🚀 終極演算法 V54 掃描中..."):
         df_a, hist_a = get_stock_advanced_data(all_flat, vip_symbols=vip_list)
         if not df_a.empty:
             if my_holdings_dict:
