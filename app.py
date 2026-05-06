@@ -88,7 +88,6 @@ def get_indices():
     res = {}
     for name, symbol in indices_dict.items():
         try:
-            # 💡 移除自訂 session，回歸 yfinance 原生認證機制
             hist = yf.Ticker(symbol).history(period="1mo")
             hist = hist.dropna(subset=['Close'])
             if len(hist) >= 2:
@@ -108,7 +107,6 @@ def get_stock_advanced_data(stock_dict, vip_symbols=[]):
     for sym in stock_dict.keys():
         tickers_to_dl.extend([f"{sym}.TW", f"{sym}.TWO"])
     
-    # 💡 關閉多執行緒 (threads=False)，降低伺服器封鎖機率
     try:
         batch_long = yf.download(tickers_to_dl, period="6mo", group_by="ticker", progress=False, threads=False)
         batch_short = yf.download(tickers_to_dl, period="5d", group_by="ticker", progress=False, threads=False)
@@ -144,7 +142,6 @@ def get_stock_advanced_data(stock_dict, vip_symbols=[]):
                 
                 if not hist_long.empty: break
             
-            # 🚨 終極逐檔救援通道 (回歸原生 yf.Ticker)
             if (hist_long.empty or len(hist_long) < 40) and (symbol in vip_symbols):
                 for suffix in [".TW", ".TWO"]:
                     try:
@@ -283,7 +280,7 @@ def color_pct(val):
     return ''
 
 # ================= 5. UI 介面 =================
-st.title("台股題材動態觀測站 V57 隱形戰機版")
+st.title("台股題材動態觀測")
 
 st.sidebar.header("🛠️ 新增自定義題材")
 custom_theme_name = st.sidebar.text_input("題材名稱 (例: 📰 低軌衛星)", "")
@@ -373,4 +370,5 @@ with tab3:
         st.markdown("---")
         st.subheader("全域個股線型觀測")
         target_a = st.selectbox("選擇個股", df_s['指標股'].tolist(), key="t3")
-        if target_a in hist_all: st.plotly_chart(plot_k_volume(hist_a[target_a], target_a), use_container_width=True, key=f"chart_tab3_{target_a}")
+        # 💡 就是這一行！已經把 hist_a 修正回正確的 hist_all 變數了！
+        if target_a in hist_all: st.plotly_chart(plot_k_volume(hist_all[target_a], target_a), use_container_width=True, key=f"chart_tab3_{target_a}")
