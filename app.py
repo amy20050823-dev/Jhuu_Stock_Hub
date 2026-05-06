@@ -16,21 +16,14 @@ st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
 if 'custom_themes' not in st.session_state:
     st.session_state['custom_themes'] = {}
 
-# 🎭 建立偽裝 Session，假裝是真人 Chrome 瀏覽器
-def get_safe_session():
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
-    })
-    return session
-
 # ================= 1.6 自動抓取中文股名小爬蟲 =================
 def get_tw_stock_name(symbol):
     try:
         url = f"https://tw.stock.yahoo.com/quote/{symbol}"
-        res = get_safe_session().get(url, timeout=3)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        }
+        res = requests.get(url, headers=headers, timeout=3)
         soup = BeautifulSoup(res.text, 'html.parser')
         title = soup.find('title').text
         name = title.split('(')[0].strip()
@@ -66,7 +59,12 @@ BASE_STOCK_DB = {
 }
 
 STOCK_DB = {**BASE_STOCK_DB, **st.session_state['custom_themes']}
-SYMBOL_TO_THEME = {sym: theme for theme, stocks in STOCK_DB.items() for sym in stocks}
+
+SYMBOL_TO_THEME = {}
+for theme_full, stocks in STOCK_DB.items():
+    for sym in stocks:
+        SYMBOL_TO_THEME[sym] = theme_full
+
 LEADERS = ["2330", "2317", "3450", "4979", "3037", "2383", "3017", "2308", "2327", "2454", "3661", "1519", "2603"]
 
 # ================= 4. 核心抓取與策略函數 =================
@@ -75,7 +73,8 @@ def get_market_news():
     news = []
     try:
         url_tw = "https://news.google.com/rss/search?q=台股+OR+股市&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
-        res = get_safe_session().get(url_tw, timeout=5)
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        res = requests.get(url_tw, headers=headers, timeout=5)
         soup = BeautifulSoup(res.text, 'xml')
         for item in soup.find_all('item')[:20]:
             title = item.title.text.split(' - ')[0]
@@ -87,10 +86,10 @@ def get_market_news():
 def get_indices():
     indices_dict = {"加權指數": "^TWII", "那斯達克": "^IXIC", "費半指數": "^SOX", "美光(MU)": "MU", "三星(韓國)": "005930.KS", "WTI原油": "CL=F"}
     res = {}
-    session = get_safe_session()
     for name, symbol in indices_dict.items():
         try:
-            hist = yf.Ticker(symbol, session=session).history(period="1mo")
+            # 💡 移除自訂 session，回歸 yfinance 原生認證機制
+            hist = yf.Ticker(symbol).history(period="1mo")
             hist = hist.dropna(subset=['Close'])
             if len(hist) >= 2:
                 close, prev = float(hist['Close'].iloc[-1]), float(hist['Close'].iloc[-2])
@@ -101,42 +100,22 @@ def get_indices():
 
 @st.cache_data(ttl=600)
 def get_stock_advanced_data(stock_dict, vip_symbols=[]):
-    data_list, price_history_dict = [], {}
+    data_list = []
+    price_history_dict = {} 
     if not stock_dict: return pd.DataFrame(data_list), price_history_dict
 
     tickers_to_dl = []
     for sym in stock_dict.keys():
         tickers_to_dl.extend([f"{sym}.TW", f"{sym}.TWO"])
     
-    # 📦 V56 安全偷渡下載邏輯
-    def safe_download(tickers, period):
-        session = get_safe_session()
-        # 第一次嘗試：帶上面具後一波流
-        try:
-            df = yf.download(tickers, period=period, group_by="ticker", progress=False, threads=True, session=session)
-            if not df.empty: return df
-        except: pass
-        
-        # 第二次嘗試：若被擋，啟動降速分批下載
-        chunks = [tickers[i:i+40] for i in range(0, len(tickers), 40)]
-        frames = []
-        for chunk in chunks:
-            try:
-                # 關閉多執行緒，避免瞬間流量過大
-                df = yf.download(chunk, period=period, group_by="ticker", progress=False, threads=False, session=session)
-                if not df.empty: frames.append(df)
-            except: pass
-            time.sleep(0.2) # 溫柔間隔
-            
-        if frames:
-            try: return pd.concat(frames, axis=1)
-            except: return pd.DataFrame()
-        return pd.DataFrame()
+    # 💡 關閉多執行緒 (threads=False)，降低伺服器封鎖機率
+    try:
+        batch_long = yf.download(tickers_to_dl, period="6mo", group_by="ticker", progress=False, threads=False)
+        batch_short = yf.download(tickers_to_dl, period="5d", group_by="ticker", progress=False, threads=False)
+    except:
+        batch_long = pd.DataFrame()
+        batch_short = pd.DataFrame()
 
-    batch_long = safe_download(tickers_to_dl, "6mo")
-    batch_short = safe_download(tickers_to_dl, "5d")
-
-    session = get_safe_session()
     for symbol, name in stock_dict.items():
         try:
             hist_long, hist_short, tkr_suffix = pd.DataFrame(), pd.DataFrame(), ""
@@ -146,10 +125,14 @@ def get_stock_advanced_data(stock_dict, vip_symbols=[]):
                 if isinstance(batch_long.columns, pd.MultiIndex):
                     if tkr in batch_long.columns.get_level_values(0):
                         temp_hist = batch_long[tkr].copy().dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low']) 
-                        if len(temp_hist) > 0: hist_long, tkr_suffix = temp_hist, tkr
+                        if len(temp_hist) > 0: 
+                            hist_long = temp_hist
+                            tkr_suffix = tkr
                 else:
                     temp_hist = batch_long.copy().dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low'])
-                    if len(temp_hist) > 0: hist_long, tkr_suffix = temp_hist, tkr
+                    if len(temp_hist) > 0: 
+                        hist_long = temp_hist
+                        tkr_suffix = tkr
                 
                 if isinstance(batch_short.columns, pd.MultiIndex):
                     if tkr in batch_short.columns.get_level_values(0):
@@ -161,16 +144,16 @@ def get_stock_advanced_data(stock_dict, vip_symbols=[]):
                 
                 if not hist_long.empty: break
             
-            # 🚨 VIP 獨立救援通道 (強制套用偽裝 Session)
+            # 🚨 終極逐檔救援通道 (回歸原生 yf.Ticker)
             if (hist_long.empty or len(hist_long) < 40) and (symbol in vip_symbols):
                 for suffix in [".TW", ".TWO"]:
                     try:
                         tkr = f"{symbol}{suffix}"
-                        rescue_data = yf.Ticker(tkr, session=session).history(period="6mo")
+                        rescue_data = yf.Ticker(tkr).history(period="6mo")
                         if not rescue_data.empty and len(rescue_data) >= 60:
                             hist_long = rescue_data.dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low'])
                             tkr_suffix = tkr
-                            rescue_short = yf.Ticker(tkr, session=session).history(period="5d")
+                            rescue_short = yf.Ticker(tkr).history(period="5d")
                             if not rescue_short.empty: hist_short = rescue_short.dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low'])
                             break
                     except: pass
@@ -300,7 +283,7 @@ def color_pct(val):
     return ''
 
 # ================= 5. UI 介面 =================
-st.title("台股題材動態觀測站 V56 裝甲車版")
+st.title("台股題材動態觀測站 V57 隱形戰機版")
 
 st.sidebar.header("🛠️ 新增自定義題材")
 custom_theme_name = st.sidebar.text_input("題材名稱 (例: 📰 低軌衛星)", "")
@@ -340,7 +323,7 @@ all_flat = {}
 for th, stks in STOCK_DB.items(): all_flat.update(stks)
 if my_holdings_dict: all_flat.update(my_holdings_dict)
 
-with st.spinner("🚀 裝甲車模式啟動：偽裝連線與降速分批下載中，確保突破 Yahoo 防護網..."):
+with st.spinner("🚀 隱形戰機模式啟動：單線程安靜抓取資料，繞過 Yahoo 警報系統..."):
     df_all, hist_all = get_stock_advanced_data(all_flat, vip_symbols=vip_list)
 
 tab1, tab2, tab3 = st.tabs(["首頁：大盤與熱度", "細部題材：技術面", "波段選股"])
@@ -390,4 +373,4 @@ with tab3:
         st.markdown("---")
         st.subheader("全域個股線型觀測")
         target_a = st.selectbox("選擇個股", df_s['指標股'].tolist(), key="t3")
-        if target_a in hist_all: st.plotly_chart(plot_k_volume(hist_all[target_a], target_a), use_container_width=True, key=f"chart_tab3_{target_a}")
+        if target_a in hist_all: st.plotly_chart(plot_k_volume(hist_a[target_a], target_a), use_container_width=True, key=f"chart_tab3_{target_a}")
