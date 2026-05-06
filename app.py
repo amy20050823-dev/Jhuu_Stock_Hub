@@ -280,7 +280,7 @@ def color_pct(val):
     return ''
 
 # ================= 5. UI 介面 =================
-st.title("台股題材動態觀測站 V59 黑馬回歸版")
+st.title("台股題材動態觀測")
 
 st.sidebar.header("🛠️ 新增自定義題材")
 custom_theme_name = st.sidebar.text_input("題材名稱 (例: 📰 低軌衛星)", "")
@@ -302,12 +302,15 @@ st.sidebar.markdown("---")
 st.sidebar.header("💼 我的持股健檢")
 my_holdings_input = st.sidebar.text_input("輸入股票代號 (如: 8064, 5433)", "")
 my_holdings_dict, vip_list = {}, []
+
+# 💡 V60 修正：老老實實拆成兩行，不再犯語法錯誤
 if my_holdings_input:
     for s in my_holdings_input.split(','):
         s = s.strip()
         if s:
             name = get_tw_stock_name(s)
-            my_holdings_dict[s], vip_list.append(f"持股 {name}", s)
+            my_holdings_dict[s] = f"持股 {name}"
+            vip_list.append(s)
 
 for theme, stocks in st.session_state['custom_themes'].items(): vip_list.extend(list(stocks.keys()))
 
@@ -359,7 +362,6 @@ with tab2:
 with tab3:
     st.markdown("🚀 已載入 MACD、OBV背離 與 20日壓力全域過濾器")
     if not df_all.empty:
-        # 💡 V59 修復：找回丟失的潛在黑馬邏輯
         df_potential = df_all[df_all['黑馬潛力'] != "-"]
         
         if my_holdings_dict:
