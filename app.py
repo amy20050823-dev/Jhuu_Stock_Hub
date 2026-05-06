@@ -280,7 +280,7 @@ def color_pct(val):
     return ''
 
 # ================= 5. UI 介面 =================
-st.title("台股題材動態觀測")
+st.title("台股題材動態觀測站 V59 黑馬回歸版")
 
 st.sidebar.header("🛠️ 新增自定義題材")
 custom_theme_name = st.sidebar.text_input("題材名稱 (例: 📰 低軌衛星)", "")
@@ -359,10 +359,32 @@ with tab2:
 with tab3:
     st.markdown("🚀 已載入 MACD、OBV背離 與 20日壓力全域過濾器")
     if not df_all.empty:
-        if my_holdings_dict:
-            st.markdown("### 💼 我的持股健檢")
-            st.dataframe(df_all[df_all['代號'].isin(my_holdings_dict.keys())][['資料日期', '指標股', '漲跌幅(%)', '現價', '波段策略', '籌碼動能']].style.map(color_strategy, subset=['波段策略']).map(color_pct, subset=['漲跌幅(%)']), use_container_width=True)
+        # 💡 V59 修復：找回丟失的潛在黑馬邏輯
+        df_potential = df_all[df_all['黑馬潛力'] != "-"]
         
+        if my_holdings_dict:
+            col_t1, col_t2 = st.columns(2)
+            with col_t1:
+                st.markdown("### 💼 我的持股健檢")
+                df_my = df_all[df_all['代號'].isin(my_holdings_dict.keys())]
+                if not df_my.empty:
+                    st.dataframe(df_my[['資料日期', '指標股', '漲跌幅(%)', '現價', '波段策略', '籌碼動能']].style.map(color_strategy, subset=['波段策略']).map(color_pct, subset=['漲跌幅(%)']), use_container_width=True)
+                else:
+                    st.warning("找不到輸入的股票資料。")
+            with col_t2:
+                st.markdown("### 🐎 今日潛在爆發黑馬")
+                if not df_potential.empty:
+                    st.dataframe(df_potential[['所屬題材', '指標股', '漲跌幅(%)', '現價', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略', '黑馬潛力']).map(color_pct, subset=['漲跌幅(%)']), use_container_width=True)
+                else:
+                    st.info("今日無符合布林壓縮且主力吃貨的黑馬股。")
+        else:
+            st.markdown("### 🐎 今日潛在爆發黑馬")
+            if not df_potential.empty:
+                st.dataframe(df_potential[['所屬題材', '指標股', '漲跌幅(%)', '現價', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略', '黑馬潛力']).map(color_pct, subset=['漲跌幅(%)']), use_container_width=True)
+            else:
+                st.info("今日無符合布林壓縮且主力吃貨的黑馬股。")
+
+        st.markdown("---")
         st.markdown("### 全市場波段選股總表")
         df_s = df_all.sort_values("策略權重").drop(columns=['策略權重'])
         st.dataframe(df_s[['資料日期', '所屬題材', '指標股', '漲跌幅(%)', '現價', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略', '黑馬潛力']).map(color_pct, subset=['漲跌幅(%)']), height=600, use_container_width=True)
@@ -370,5 +392,4 @@ with tab3:
         st.markdown("---")
         st.subheader("全域個股線型觀測")
         target_a = st.selectbox("選擇個股", df_s['指標股'].tolist(), key="t3")
-        # 💡 就是這一行！已經把 hist_a 修正回正確的 hist_all 變數了！
         if target_a in hist_all: st.plotly_chart(plot_k_volume(hist_all[target_a], target_a), use_container_width=True, key=f"chart_tab3_{target_a}")
