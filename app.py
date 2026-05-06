@@ -293,7 +293,7 @@ def color_pct(val):
     return ''
 
 # ================= 5. UI 介面 =================
-st.title("台股題材動態觀測站 V54")
+st.title("台股題材動態觀測站 V55")
 
 st.sidebar.header("🛠️ 新增自定義題材")
 custom_theme_name = st.sidebar.text_input("題材名稱 (例: 📰 低軌衛星)", "")
@@ -325,9 +325,17 @@ if my_holdings_input:
 for theme, stocks in st.session_state['custom_themes'].items(): vip_list.extend(list(stocks.keys()))
 
 st.sidebar.markdown("---")
-if st.sidebar.button("強制刷新 (載入最新資料)"):
+if st.sidebar.button("強制刷新 (清除快取並重新載入)"):
     st.cache_data.clear()
     st.rerun()
+
+# 💡 V55 架構大修復：全域一波流資料擷取，徹底解決 Yahoo 封鎖問題
+all_flat = {}
+for th, stks in STOCK_DB.items(): all_flat.update(stks)
+if my_holdings_dict: all_flat.update(my_holdings_dict)
+
+with st.spinner("🚀 終極演算法 V55 全域掃描中 (正在一波流打包向 Yahoo 索取資料以防封鎖)..."):
+    df_all, hist_all = get_stock_advanced_data(all_flat, vip_symbols=vip_list)
 
 tab1, tab2, tab3 = st.tabs(["首頁：大盤與熱度", "細部題材：技術面", "波段選股"])
 
@@ -339,17 +347,14 @@ with tab1:
     col_l, col_r = st.columns([1.5, 1])
     with col_l:
         st.subheader("今日熱門排行")
-        theme_res = []
-        for th, stks in STOCK_DB.items():
-            df_t, _ = get_stock_advanced_data(stks)
-            if not df_t.empty: theme_res.append({"題材": th, "漲跌(%)": round(df_t["漲跌幅(%)"].mean(), 2)})
-        
-        # 💡 V54 修復區：加入防呆機制，避免 Yahoo 沒資料時去排序空表格
-        if theme_res:
-            st.dataframe(pd.DataFrame(theme_res).sort_values("漲跌(%)", ascending=False), height=400, use_container_width=True, hide_index=True)
+        # 💡 直接拿剛才全域下載好的 df_all 切割使用，絕對不再向 Yahoo 發請求
+        if not df_all.empty:
+            theme_rank = df_all.groupby('所屬題材')['漲跌幅(%)'].mean().reset_index()
+            theme_rank.columns = ['題材', '漲跌(%)']
+            theme_rank['漲跌(%)'] = theme_rank['漲跌(%)'].round(2)
+            st.dataframe(theme_rank.sort_values("漲跌(%)", ascending=False), height=400, use_container_width=True, hide_index=True)
         else:
-            st.warning("⚠️ Yahoo API 暫時無回應，這可能是短暫的連線阻擋，請稍後點擊強制刷新。")
-
+            st.error("⚠️ 抓取失敗，可能剛才被 Yahoo 擋住了，請點左下角「強制刷新」。")
     with col_r:
         st.subheader("題材偵察機 (盤面新聞)")
         news_list = get_market_news()
@@ -358,22 +363,28 @@ with tab1:
 
 with tab2:
     sel_theme = st.selectbox("請選擇族群", list(STOCK_DB.keys()))
-    df_f, hist_all = get_stock_advanced_data(STOCK_DB[sel_theme], vip_symbols=vip_list)
-    if not df_f.empty:
+    # 💡 同樣拿全域資料過濾，不發新請求
+    if not df_all.empty:
+        df_f = df_all[df_all['所屬題材'] == sel_theme]
         st.dataframe(df_f[['資料日期', '指標股', '漲跌幅(%)', '現價', '波段策略', '籌碼動能']].style.map(color_pct, subset=['漲跌幅(%)']).map(color_strategy, subset=['波段策略']), use_container_width=True)
+        
+        st.markdown("---")
+        if not df_f.empty:
+            target = st.selectbox("查看 K 線與成交量", df_f['指標股'].tolist(), key="t2")
+            if target in hist_all: st.plotly_chart(plot_k_volume(hist_all[target], target), use_container_width=True, key=f"chart_tab2_{target}")
 
 with tab3:
-    all_flat = {}
-    for th, stks in STOCK_DB.items(): all_flat.update(stks)
-    if my_holdings_dict: all_flat.update(my_holdings_dict)
-    
-    with st.spinner("🚀 終極演算法 V54 掃描中..."):
-        df_a, hist_a = get_stock_advanced_data(all_flat, vip_symbols=vip_list)
-        if not df_a.empty:
-            if my_holdings_dict:
-                st.markdown("### 💼 我的持股健檢")
-                st.dataframe(df_a[df_a['代號'].isin(my_holdings_dict.keys())][['資料日期', '指標股', '漲跌幅(%)', '現價', '波段策略', '籌碼動能']].style.map(color_strategy, subset=['波段策略']).map(color_pct, subset=['漲跌幅(%)']), use_container_width=True)
-            
-            st.markdown("### 全市場波段選股總表")
-            df_s = df_a.sort_values("策略權重").drop(columns=['策略權重'])
-            st.dataframe(df_s.style.map(color_strategy, subset=['波段策略', '黑馬潛力']).map(color_pct, subset=['漲跌幅(%)']), height=600, use_container_width=True)
+    st.markdown("🚀 已載入 MACD、OBV背離 與 20日壓力全域過濾器")
+    if not df_all.empty:
+        if my_holdings_dict:
+            st.markdown("### 💼 我的持股健檢")
+            st.dataframe(df_all[df_all['代號'].isin(my_holdings_dict.keys())][['資料日期', '指標股', '漲跌幅(%)', '現價', '波段策略', '籌碼動能']].style.map(color_strategy, subset=['波段策略']).map(color_pct, subset=['漲跌幅(%)']), use_container_width=True)
+        
+        st.markdown("### 全市場波段選股總表")
+        df_s = df_all.sort_values("策略權重").drop(columns=['策略權重'])
+        st.dataframe(df_s[['資料日期', '所屬題材', '指標股', '漲跌幅(%)', '現價', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略', '黑馬潛力']).map(color_pct, subset=['漲跌幅(%)']), height=600, use_container_width=True)
+        
+        st.markdown("---")
+        st.subheader("全域個股線型觀測")
+        target_a = st.selectbox("選擇個股", df_s['指標股'].tolist(), key="t3")
+        if target_a in hist_all: st.plotly_chart(plot_k_volume(hist_all[target_a], target_a), use_container_width=True, key=f"chart_tab3_{target_a}")
