@@ -212,9 +212,14 @@ def get_stock_advanced_data(stock_dict, vip_symbols=[]):
             top_div = (close >= price_h_20) and (obv.iloc[-1] < obv_h_20) 
             bottom_div = (close <= price_l_20) and (obv.iloc[-1] > obv_l_20) 
             
+            # 💡 V61 修正盲點：壓力線與突破判斷
             res_20 = hist['High'].rolling(20).max().shift(1).iloc[-1]
+            # 1. 距離天花板還很遠 (大於 5%)
             far_from_res = (res_20 - close) / close > 0.05
-            near_res = (abs(res_20 - close) / close < 0.02)
+            # 2. 今天直接帶量把天花板捅破了！
+            is_breakout = close > res_20
+            # 3. 剛好撞到天花板而且沒突破
+            near_res = (abs(res_20 - close) / close < 0.02) and (close <= res_20)
 
             price_history_dict[display_name] = hist.tail(60)
 
@@ -234,8 +239,9 @@ def get_stock_advanced_data(stock_dict, vip_symbols=[]):
                 action, action_prio = "🔥 短線過熱 (上影線)", 2
             elif (k_s.iloc[-1] > 80 and k_s.iloc[-1] < d_s.iloc[-1]) or (osc.iloc[-1] < osc.iloc[-2] and osc.iloc[-1] > 0):
                 action, action_prio = "💸 獲利了結 (動能減弱)", 3
-            elif ( (k_s.iloc[-1] > d_s.iloc[-1] and k_s.iloc[-2] <= d_s.iloc[-2]) or (osc.iloc[-1] > osc.iloc[-2]) ) and obv_uptrend and obv_is_up_right and far_from_res:
-                action, action_prio = "🚀 可進場，kd obv上 無壓力", 4
+            # 💡 完美進場點升級：無壓力「或是」已強勢突破！
+            elif ( (k_s.iloc[-1] > d_s.iloc[-1] and k_s.iloc[-2] <= d_s.iloc[-2]) or (osc.iloc[-1] > osc.iloc[-2]) ) and obv_uptrend and obv_is_up_right and (far_from_res or is_breakout):
+                action, action_prio = "🚀 可進場，kd obv上 無壓力(或突破)", 4
             elif bottom_div and k_s.iloc[-1] < 30:
                 action, action_prio = "💎 主力吃貨及底背離", 5
             elif close > hist['MA20'].iloc[-1] and close > hist['MA60'].iloc[-1] and dif.iloc[-1] > 0:
@@ -303,7 +309,6 @@ st.sidebar.header("💼 我的持股健檢")
 my_holdings_input = st.sidebar.text_input("輸入股票代號 (如: 8064, 5433)", "")
 my_holdings_dict, vip_list = {}, []
 
-# 💡 V60 修正：老老實實拆成兩行，不再犯語法錯誤
 if my_holdings_input:
     for s in my_holdings_input.split(','):
         s = s.strip()
