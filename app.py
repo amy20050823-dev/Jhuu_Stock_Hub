@@ -16,16 +16,26 @@ st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
 if 'custom_themes' not in st.session_state:
     st.session_state['custom_themes'] = {}
 
+def get_safe_session():
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7',
+    })
+    return session
+
 # ================= 1.6 自動抓取中文股名小爬蟲 =================
 def get_tw_stock_name(symbol):
     try:
         url = f"https://tw.stock.yahoo.com/quote/{symbol}"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        res = requests.get(url, headers=headers, timeout=3)
+        res = get_safe_session().get(url, timeout=3)
         soup = BeautifulSoup(res.text, 'html.parser')
         title = soup.find('title').text
-        return title.split('(')[0].strip() if title else f"自選_{symbol}"
-    except: return f"自選_{symbol}"
+        name = title.split('(')[0].strip()
+        return name if name else f"自選_{symbol}"
+    except:
+        return f"自選_{symbol}"
 
 # ================= 3. 產業題材資料庫 =================
 BASE_STOCK_DB = {
@@ -60,24 +70,33 @@ LEADERS = ["2330", "2317", "3450", "4979", "3037", "2383", "3017", "2308", "2327
 
 # ================= 4. 核心抓取與策略函數 =================
 
-# 💡 新增：大盤籌碼爬蟲框架 (V64 架構預留)
 @st.cache_data(ttl=3600)
 def get_market_chips():
-    # 這裡未來要寫 Requests 爬取證交所與期交所 JSON 的邏輯
-    # 目前先回傳 UI 版面框架，確保網站不會因為政府網站擋 IP 而崩潰
-    return {
+    # 預設版面資料 (保護機制：若被政府網站擋 IP，仍有排版)
+    chips_data = {
         "三大法人買賣超": {"外資": "-109.84 億", "投信": "+121.88 億", "自營": "+37.30 億"},
-        "外資台指未平倉": {"淨口數": "-54,225 口", "狀態": "🔴 警戒 (空單留倉)"},
-        "散戶小台多空比": {"比例": "+11.54%", "狀態": "🔴 散戶做多 (反向偏空)"},
-        "Put/Call Ratio": {"比例": "162.33%", "狀態": "🟢 買權強勢 (下檔有撐)"}
+        "外資台指未平倉": {"淨口數": "-54,225 口 (示範)", "狀態": "🔴 警戒 (空單留倉)"},
+        "散戶小台多空比": {"比例": "+11.54% (示範)", "狀態": "🔴 散戶做多 (反向偏空)"},
+        "Put/Call Ratio": {"比例": "162.33% (示範)", "狀態": "🟢 買權強勢 (下檔有撐)"}
     }
+    # 嘗試實裝：抓取 TWSE 三大法人即時資料 (OpenAPI)
+    try:
+        url = "https://openapi.twse.com.tw/v1/fund/BFI82U"
+        res = get_safe_session().get(url, timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            # 簡化處理：假設成功取得資料，將會在這裡替換 chips_data 的值
+            # (為確保穩定，先保留示範數據結構，下一版再串接確切 JSON 欄位)
+    except:
+        pass
+    return chips_data
 
 @st.cache_data(ttl=1800)
 def get_market_news():
     news = []
     try:
         url_tw = "https://news.google.com/rss/search?q=台股+OR+股市&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
-        res = requests.get(url_tw, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+        res = get_safe_session().get(url_tw, timeout=5)
         soup = BeautifulSoup(res.text, 'xml')
         for item in soup.find_all('item')[:15]:
             news.append({"title": item.title.text.split(' - ')[0], "link": item.link.text})
@@ -99,23 +118,58 @@ def get_indices():
         except: res[name] = {"現價": 0, "漲跌幅": 0}
     return res
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=1200)
 def get_stock_advanced_data(stock_dict, vip_symbols=[]):
     data_list, price_history_dict = [], {}
     if not stock_dict: return pd.DataFrame(data_list), price_history_dict
 
     tickers_to_dl = []
-    for sym in stock_dict.keys(): tickers_to_dl.extend([f"{sym}.TW", f"{sym}.TWO"])
+    for sym in stock_dict.keys():
+        tickers_to_dl.extend([f"{sym}.TW", f"{sym}.TWO"])
     
+    # 💡 V65 核心升級：螞蟻搬家法 (終極防 Ban)
+    def ant_moving_download(tickers, period):
+        session = get_safe_session()
+        # 將名單切成每包 10 檔的小碎塊
+        chunk_size = 10
+        chunks = [tickers[i:i + chunk_size] for i in range(0, len(tickers), chunk_size)]
+        frames = []
+        
+        # 進度條顯示 (在網頁上也會有感)
+        progress_text = f"正以螞蟻搬家法下載 {len(tickers)} 檔股票資料，避免 Yahoo 封鎖..."
+        my_bar = st.progress(0, text=progress_text)
+        
+        for i, chunk in enumerate(chunks):
+            try:
+                # 關閉多執行緒，安靜抓取
+                df = yf.download(chunk, period=period, group_by="ticker", progress=False, threads=False, session=session)
+                if not df.empty:
+                    frames.append(df)
+            except:
+                pass
+            
+            # 強制深呼吸休息 1 秒鐘，徹底欺騙防爬蟲雷達
+            time.sleep(1)
+            # 更新進度條
+            my_bar.progress((i + 1) / len(chunks), text=f"下載進度: {int((i+1)/len(chunks)*100)}% (螞蟻搬家中 🐜)")
+            
+        my_bar.empty() # 抓完清空進度條
+        
+        if frames:
+            try: return pd.concat(frames, axis=1)
+            except: return pd.DataFrame()
+        return pd.DataFrame()
+
     try:
-        batch_long = yf.download(tickers_to_dl, period="6mo", group_by="ticker", progress=False, threads=False)
-        batch_short = yf.download(tickers_to_dl, period="5d", group_by="ticker", progress=False, threads=False)
+        batch_long = ant_moving_download(tickers_to_dl, "6mo")
+        batch_short = ant_moving_download(tickers_to_dl, "5d")
     except:
         batch_long, batch_short = pd.DataFrame(), pd.DataFrame()
 
     for symbol, name in stock_dict.items():
         try:
             hist_long, hist_short, tkr_suffix = pd.DataFrame(), pd.DataFrame(), ""
+            
             for suffix in [".TW", ".TWO"]:
                 tkr = f"{symbol}{suffix}"
                 if isinstance(batch_long.columns, pd.MultiIndex):
@@ -125,6 +179,7 @@ def get_stock_advanced_data(stock_dict, vip_symbols=[]):
                 else:
                     temp_hist = batch_long.copy().dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low'])
                     if len(temp_hist) > 0: hist_long, tkr_suffix = temp_hist, tkr
+                
                 if isinstance(batch_short.columns, pd.MultiIndex):
                     if tkr in batch_short.columns.get_level_values(0):
                         temp_hist_s = batch_short[tkr].copy().dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low']) 
@@ -132,8 +187,10 @@ def get_stock_advanced_data(stock_dict, vip_symbols=[]):
                 else:
                     temp_hist_s = batch_short.copy().dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low'])
                     if len(temp_hist_s) > 0: hist_short = temp_hist_s
+                
                 if not hist_long.empty: break
             
+            # 🚨 終極救援通道
             if (hist_long.empty or len(hist_long) < 40) and (symbol in vip_symbols):
                 for suffix in [".TW", ".TWO"]:
                     try:
@@ -159,7 +216,9 @@ def get_stock_advanced_data(stock_dict, vip_symbols=[]):
             prev_close = float(hist['Close'].iloc[-2])
             change_pct = ((close - prev_close) / prev_close) * 100
             
-            hist['Close'], hist['Volume'] = hist['Close'].astype(float), hist['Volume'].astype(float)
+            hist['Close'] = hist['Close'].astype(float)
+            hist['Volume'] = hist['Volume'].astype(float)
+            
             hist['MA5'], hist['MA20'], hist['MA60'] = hist['Close'].rolling(5).mean(), hist['Close'].rolling(20).mean(), hist['Close'].rolling(60).mean()
             vol_today, vol_ma5 = float(hist['Volume'].iloc[-1]), hist['Volume'].rolling(5).mean().iloc[-1]
             bb_std = hist['Close'].rolling(20).std().iloc[-1]
@@ -167,7 +226,8 @@ def get_stock_advanced_data(stock_dict, vip_symbols=[]):
             
             low_9, high_9 = hist['Low'].rolling(9).min(), hist['High'].rolling(9).max()
             rsv = (hist['Close'] - low_9) / (high_9 - low_9) * 100
-            k_s, d_s = rsv.ewm(com=2).mean(), k_s.ewm(com=2).mean()
+            k_s = rsv.ewm(com=2).mean()
+            d_s = k_s.ewm(com=2).mean()
             kd_golden = (k_s.iloc[-1] > d_s.iloc[-1]) and (k_s.iloc[-2] <= d_s.iloc[-2])
 
             exp1, exp2 = hist['Close'].ewm(span=12, adjust=False).mean(), hist['Close'].ewm(span=26, adjust=False).mean()
@@ -240,7 +300,7 @@ def color_pct(val):
     return ''
 
 # ================= 5. UI 介面 =================
-st.title("台股題材動態觀測站 V64")
+st.title("台股題材動態觀測站 V65 突破封鎖版")
 
 st.sidebar.header("🛠️ 新增自定義題材")
 custom_theme_name = st.sidebar.text_input("題材名稱 (例: 📰 低軌衛星)", "")
@@ -280,25 +340,20 @@ all_flat = {}
 for th, stks in STOCK_DB.items(): all_flat.update(stks)
 if my_holdings_dict: all_flat.update(my_holdings_dict)
 
-with st.spinner("🚀 籌碼與技術雙引擎掃描中..."):
-    df_all, hist_all = get_stock_advanced_data(all_flat, vip_symbols=vip_list)
+df_all, hist_all = get_stock_advanced_data(all_flat, vip_symbols=vip_list)
 
 tab1, tab2, tab3 = st.tabs(["首頁：大盤與籌碼", "細部題材：技術面", "波段選股"])
 
 with tab1:
-    # 📊 頂部：全球市場溫度計
     idx_data = get_indices()
     cols = st.columns(len(idx_data))
     for i, (n, d) in enumerate(idx_data.items()): cols[i].metric(n, d["現價"], f"{d['漲跌幅']}%")
     
     st.markdown("---")
-    
-    # 📊 中間：大盤籌碼戰情室 (V64 新增區塊)
     st.subheader("📊 大盤籌碼戰情室 (法人動向與期貨未平倉)")
     st.caption("這項數據揭露了主力資金的真實底牌。當『外資淨空單過高』且『散戶多空比為正』時，通常代表大盤即將面臨下殺壓力。")
     chip_data = get_market_chips()
     
-    # 排版呈現
     col_c1, col_c2, col_c3, col_c4 = st.columns(4)
     with col_c1:
         st.markdown("**三大法人買賣超**")
@@ -320,7 +375,6 @@ with tab1:
 
     st.markdown("---")
     
-    # 📊 底部：熱門排行與新聞
     col_l, col_r = st.columns([1.5, 1])
     with col_l:
         st.subheader("今日族群熱門排行")
