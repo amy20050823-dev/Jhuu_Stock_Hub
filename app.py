@@ -9,7 +9,6 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 import pytz
 import time
-import random
 
 # ================= 1. 網頁配置 =================
 st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
@@ -17,29 +16,12 @@ st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
 if 'custom_themes' not in st.session_state:
     st.session_state['custom_themes'] = {}
 
-# 🛡️ 核心升級：建立「隱身代理 Session」
-def get_stealth_session():
-    session = requests.Session()
-    # 隨機瀏覽器特徵
-    ua_list = [
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0'
-    ]
-    session.headers.update({
-        'User-Agent': random.choice(ua_list),
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache'
-    })
-    # 💡 這裡預留了 Proxy 擴充位，若持續被鎖可加入免費 Proxy 列表
-    return session
-
 # ================= 1.6 自動抓取中文股名小爬蟲 =================
 def get_tw_stock_name(symbol):
     try:
         url = f"https://tw.stock.yahoo.com/quote/{symbol}"
-        res = get_stealth_session().get(url, timeout=5)
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        res = requests.get(url, headers=headers, timeout=3)
         soup = BeautifulSoup(res.text, 'html.parser')
         title = soup.find('title').text
         return title.split('(')[0].strip() if title else f"自選_{symbol}"
@@ -76,48 +58,26 @@ STOCK_DB = {**BASE_STOCK_DB, **st.session_state['custom_themes']}
 SYMBOL_TO_THEME = {sym: theme for theme, stocks in STOCK_DB.items() for sym in stocks}
 LEADERS = ["2330", "2317", "3450", "4979", "3037", "2383", "3017", "2308", "2327", "2454", "3661", "1519", "2603"]
 
-# ================= 4. 核心功能 =================
-
-def chip_card_html(title, value, status, color):
-    return f"""
-    <div style="padding: 10px; border-radius: 10px; border: 1px solid #f0f2f6; background-color: #ffffff; text-align: center;">
-        <div style="color: #666; font-size: 13px; margin-bottom: 3px;">{title}</div>
-        <div style="color: #111; font-size: 20px; font-weight: bold; margin-bottom: 3px;">{value}</div>
-        <div style="color: {color}; font-size: 12px; font-weight: normal;">{status}</div>
-    </div>
-    """
-
-@st.cache_data(ttl=3600)
-def get_market_chips():
-    return {
-        "三大法人買賣超": {"外資": "-109.84 億", "投信": "+121.88 億", "自營": "+37.30 億"},
-        "外資台指未平倉": {"淨口數": "-54,225 口", "狀態": "● 警戒 (空單留倉)", "color": "#ff4b4b"},
-        "散戶小台多空比": {"比例": "+11.54%", "狀態": "● 散戶做多 (反向偏空)", "color": "#ff4b4b"},
-        "Put/Call Ratio": {"比例": "162.33%", "狀態": "● 買權強勢 (下檔有撐)", "color": "#00cc96"}
-    }
-
+# ================= 4. 核心抓取與策略函數 =================
 @st.cache_data(ttl=1800)
 def get_market_news():
     news = []
     try:
-        url = "https://news.google.com/rss/search?q=台股+OR+股市&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
-        res = get_stealth_session().get(url, timeout=5)
+        url_tw = "https://news.google.com/rss/search?q=台股+OR+股市&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
+        res = requests.get(url_tw, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
         soup = BeautifulSoup(res.text, 'xml')
-        for item in soup.find_all('item')[:15]:
+        for item in soup.find_all('item')[:12]:
             news.append({"title": item.title.text.split(' - ')[0], "link": item.link.text})
     except: pass
     return news
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=600)
 def get_indices():
     indices_dict = {"加權指數": "^TWII", "那斯達克": "^IXIC", "費半指數": "^SOX", "美光(MU)": "MU", "三星(韓國)": "005930.KS", "WTI原油": "CL=F"}
     res = {}
-    session = get_stealth_session()
     for name, symbol in indices_dict.items():
         try:
-            # 💡 破解點：加權指數強制抓取「月線」確保最新價格一定存在
-            tkr = yf.Ticker(symbol, session=session)
-            hist = tkr.history(period="1mo")
+            hist = yf.Ticker(symbol).history(period="1mo")
             if not hist.empty:
                 close, prev = float(hist['Close'].iloc[-1]), float(hist['Close'].iloc[-2])
                 res[name] = {"現價": round(close, 2), "漲跌幅": round((close-prev)/prev*100, 2)}
@@ -125,51 +85,50 @@ def get_indices():
         except: res[name] = {"現價": 0, "漲跌幅": 0}
     return res
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=600)
 def get_stock_advanced_data(stock_dict, vip_symbols=[]):
     data_list, price_history_dict = [], {}
     if not stock_dict: return pd.DataFrame(data_list), price_history_dict
 
-    symbols = list(stock_dict.keys())
-    progress_bar = st.progress(0, text="隱身戰機偵測中：透過代理伺服器繞過封鎖並逐一掃描...")
-    
-    session = get_stealth_session()
-    for i, symbol in enumerate(symbols):
-        try:
-            # 💡 增加隨機間隔，徹底偽裝
-            time.sleep(random.uniform(0.2, 0.6))
-            progress_bar.progress((i + 1) / len(symbols))
-            
-            hist = pd.DataFrame()
-            for suffix in [".TW", ".TWO"]:
-                tkr = yf.Ticker(f"{symbol}{suffix}", session=session)
-                temp = tkr.history(period="6mo")
-                if not temp.empty: 
-                    hist = temp
-                    break
-            
-            if hist.empty: continue
+    tickers = [f"{s}.TW" for s in stock_dict.keys()] + [f"{s}.TWO" for s in stock_dict.keys()]
+    try:
+        batch_long = yf.download(tickers, period="6mo", group_by="ticker", progress=False, threads=True)
+        batch_short = yf.download(tickers, period="5d", group_by="ticker", progress=False, threads=True)
+    except: return pd.DataFrame(), {}
 
-            # --- 數據運算 ---
-            close, prev_close = float(hist['Close'].iloc[-1]), float(hist['Close'].iloc[-2])
+    for symbol, name in stock_dict.items():
+        try:
+            hist_long, hist_short = pd.DataFrame(), pd.DataFrame()
+            for suffix in [".TW", ".TWO"]:
+                tkr = f"{symbol}{suffix}"
+                if isinstance(batch_long.columns, pd.MultiIndex) and tkr in batch_long.columns.get_level_values(0):
+                    hist_long = batch_long[tkr].copy().dropna(subset=['Close'])
+                if isinstance(batch_short.columns, pd.MultiIndex) and tkr in batch_short.columns.get_level_values(0):
+                    hist_short = batch_short[tkr].copy().dropna(subset=['Close'])
+                if not hist_long.empty: break
+            
+            if hist_long.empty: continue
+            hist = pd.concat([hist_long, hist_short]).drop_duplicates().sort_index()
+            
+            close = float(hist['Close'].iloc[-1])
+            prev_close = float(hist['Close'].iloc[-2])
             change_pct = ((close - prev_close) / prev_close) * 100
-            hist['MA20'], hist['MA60'] = hist['Close'].rolling(20).mean(), hist['Close'].rolling(60).mean()
+            
+            hist['MA5'], hist['MA20'], hist['MA60'] = hist['Close'].rolling(5).mean(), hist['Close'].rolling(20).mean(), hist['Close'].rolling(60).mean()
             vol_today, vol_ma5 = float(hist['Volume'].iloc[-1]), hist['Volume'].rolling(5).mean().iloc[-1]
             bb_width = (4 * hist['Close'].rolling(20).std()) / hist['MA20']
             
-            # KDJ/MACD/OBV 簡化運算確保穩定
             rsv = (hist['Close'] - hist['Low'].rolling(9).min()) / (hist['High'].rolling(9).max() - hist['Low'].rolling(9).min()) * 100
             k_s = rsv.ewm(com=2).mean()
             dif = hist['Close'].ewm(span=12).mean() - hist['Close'].ewm(span=26).mean()
             osc = dif - dif.ewm(span=9).mean()
             obv = (np.sign(hist['Close'].diff()) * hist['Volume']).fillna(0).cumsum()
             
-            # --- 條件判定 ---
-            action, prio = "🟡 盤整 0軸下 無動能", 4
             obv_up = obv.iloc[-1] > obv.rolling(10).mean().iloc[-1]
             obv_high = obv.iloc[-1] >= obv.rolling(20).max().iloc[-1] * 0.95
             res_20 = hist['High'].rolling(20).max().shift(1).iloc[-1]
             
+            action, prio = "🟡 盤整 0軸下 無動能", 4
             if close < hist['MA20'].iloc[-1]: action, prio = "🛑 破線停損 (籌碼流出)", 8
             elif (k_s.iloc[-1] > k_s.iloc[-2] or osc.iloc[-1] > osc.iloc[-2]) and obv_up and obv_high and (close > res_20 or (res_20-close)/close > 0.05):
                 action, prio = "🚀 可進場，kd obv上 無壓力(或突破)", 1
@@ -178,14 +137,12 @@ def get_stock_advanced_data(stock_dict, vip_symbols=[]):
             crown = "👑 " if symbol in LEADERS else ""
             data_list.append({
                 "資料日期": hist.index[-1].strftime('%m/%d'), "代號": symbol, "所屬題材": SYMBOL_TO_THEME.get(symbol, "📌 自選股"),
-                "指標股": f"{crown}{stock_dict[symbol]} ({symbol})", "漲跌幅(%)": round(change_pct, 2), "現價": round(close, 2),
+                "指標股": f"{crown}{name} ({symbol})", "漲跌幅(%)": round(change_pct, 2), "現價": round(close, 2),
                 "波段策略": action, "策略權重": prio, "黑馬潛力": "🐎 爆發準備" if (close > hist['MA20'].iloc[-1] and bb_width.iloc[-1] < 0.15 and obv_up) else "-",
                 "籌碼動能": "爆量流入" if vol_today > vol_ma5 * 1.5 else "量能平穩"
             })
-            price_history_dict[f"{crown}{stock_dict[symbol]} ({symbol})"] = hist.tail(60)
+            price_history_dict[f"{crown}{name} ({symbol})"] = hist.tail(60)
         except: pass
-    
-    progress_bar.empty()
     return pd.DataFrame(data_list), price_history_dict
 
 def color_strategy(val):
@@ -194,10 +151,29 @@ def color_strategy(val):
     return ''
 
 # ================= 5. UI 介面 =================
-st.title("台股題材動態觀測站 V67 終極隱身版")
+st.title("台股題材動態觀測站 V68 穩定回歸版")
 
-# 持股輸入與刷新
-my_holdings_input = st.sidebar.text_input("💼 我的持股健檢 (如: 2301, 5388)", "")
+# 🛠️ 側邊欄：手動增加股票庫
+st.sidebar.header("🛠️ 新增自定義題材")
+custom_theme_name = st.sidebar.text_input("題材名稱 (例: 📰 低軌衛星)", "")
+custom_theme_stocks = st.sidebar.text_input("股票代號 (例: 2485, 3324)", "")
+if st.sidebar.button("加入 / 更新題材庫"):
+    if custom_theme_name and custom_theme_stocks:
+        with st.spinner("自動抓取股票名稱中..."):
+            curr = {}
+            if custom_theme_name in BASE_STOCK_DB: curr.update(BASE_STOCK_DB[custom_theme_name])
+            if custom_theme_name in st.session_state['custom_themes']: curr.update(st.session_state['custom_themes'][custom_theme_name])
+            for s in custom_theme_stocks.split(','):
+                s = s.strip()
+                if s: curr[s] = get_tw_stock_name(s)
+            st.session_state['custom_themes'][custom_theme_name] = curr
+            st.sidebar.success(f"已成功擴充 {custom_theme_name}！")
+
+st.sidebar.markdown("---")
+
+# 💼 側邊欄：我的持股健檢
+st.sidebar.header("💼 我的持股健檢")
+my_holdings_input = st.sidebar.text_input("輸入代號 (如: 2301, 5388)", "")
 my_holdings_dict, vip_list = {}, []
 if my_holdings_input:
     for s in my_holdings_input.split(','):
@@ -207,37 +183,31 @@ if my_holdings_input:
             my_holdings_dict[s] = name
             vip_list.append(s)
 
-if st.sidebar.button("🚀 強制重啟掃描 (清除緩存)"):
+st.sidebar.markdown("---")
+if st.sidebar.button("🔄 強制刷新 (重載資料)"):
     st.cache_data.clear()
     st.rerun()
 
 all_flat = {**{sym: name for t in STOCK_DB.values() for sym, name in t.items()}, **my_holdings_dict}
-df_all, hist_all = get_stock_advanced_data(all_flat, vip_symbols=vip_list)
 
-tab1, tab2, tab3 = st.tabs(["首頁：大盤與籌碼", "細部題材：技術面", "波段選股"])
+with st.spinner("🚀 資料極速加載中..."):
+    df_all, hist_all = get_stock_advanced_data(all_flat, vip_symbols=vip_list)
+
+tab1, tab2, tab3 = st.tabs(["📊 首頁：大盤熱度", "🔍 細部題材：技術面", "🎯 波段選股 & 黑馬"])
 
 with tab1:
-    # 頂部：全球市場
+    # 頂部指數
     idx_data = get_indices()
     idx_cols = st.columns(len(idx_data))
     for i, (n, d) in enumerate(idx_data.items()): idx_cols[i].metric(n, d["現價"], f"{d['漲跌幅']}%")
-    
-    st.markdown("---")
-    st.subheader("📊 大盤籌碼戰情室")
-    chip_data = get_market_chips()
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: st.markdown(chip_card_html("三大法人買賣超", f"外資 {chip_data['三大法人買賣超']['外資']}", f"投信 {chip_data['三大法人買賣超']['投信']}", "#333"), unsafe_allow_html=True)
-    with c2: st.markdown(chip_card_html("外資台指淨未平倉", chip_data['外資台指未平倉']['淨口數'], chip_data['外資台指未平倉']['狀態'], chip_data['外資台指未平倉']['color']), unsafe_allow_html=True)
-    with c3: st.markdown(chip_card_html("散戶小台多空比", chip_data['散戶小台多空比']['比例'], chip_data['散戶小台多空比']['狀態'], chip_data['散戶小台多空比']['color']), unsafe_allow_html=True)
-    with c4: st.markdown(chip_card_html("Put/Call Ratio", chip_data['Put/Call Ratio']['比例'], chip_data['Put/Call Ratio']['狀態'], chip_data['Put/Call Ratio']['color']), unsafe_allow_html=True)
-
     st.markdown("---")
     col_l, col_r = st.columns([1.5, 1])
     with col_l:
         st.subheader("今日族群熱門排行")
         if not df_all.empty:
-            st.dataframe(df_all.groupby('所屬題材')['漲跌幅(%)'].mean().reset_index().sort_values("漲跌幅(%)", ascending=False), height=400, use_container_width=True, hide_index=True)
-        else: st.warning("隱身戰機正在嘗試重新建立連線，請稍候並刷新...")
+            theme_rank = df_all.groupby('所屬題材')['漲跌幅(%)'].mean().reset_index().sort_values("漲跌幅(%)", ascending=False)
+            st.dataframe(theme_rank, height=400, use_container_width=True, hide_index=True)
+        else: st.warning("Yahoo 資料連線中，請稍候並刷新...")
     with col_r:
         st.subheader("題材偵察機 (盤面新聞)")
         news = get_market_news()
@@ -252,5 +222,20 @@ with tab2:
 
 with tab3:
     if not df_all.empty:
-        st.markdown("### 全市場波段選股總表")
+        # 持股與黑馬排前面
+        df_potential = df_all[df_all['黑馬潛力'] != "-"].sort_values("策略權重")
+        
+        if my_holdings_dict:
+            st.markdown("### 💼 我的持股健檢")
+            df_my = df_all[df_all['代號'].isin(my_holdings_dict.keys())].sort_values("策略權重")
+            st.dataframe(df_my[['指標股', '漲跌幅(%)', '現價', '波段策略', '籌碼動能']].style.map(color_strategy, subset=['波段策略']), use_container_width=True)
+        
+        st.markdown("### 🐎 今日潛在爆發黑馬")
+        if not df_potential.empty:
+            st.dataframe(df_potential[['所屬題材', '指標股', '漲跌幅(%)', '現價', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略', '黑馬潛力']), use_container_width=True)
+        else:
+            st.info("今日無符合布林壓縮條件之黑馬。")
+
+        st.markdown("---")
+        st.markdown("### 🎯 全市場波段選股總表 (按推薦序排列)")
         st.dataframe(df_all.sort_values("策略權重")[['資料日期', '所屬題材', '指標股', '漲跌幅(%)', '現價', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略']), height=600, use_container_width=True)
