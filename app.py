@@ -60,24 +60,38 @@ LEADERS = ["2330", "2317", "3450", "4979", "3037", "2383", "3017", "2308", "2327
 
 # ================= 4. 核心抓取與策略函數 =================
 
-# 💡 V69 獨家新增：合法的證交所 OpenAPI 籌碼抓取
+# 💡 V70 證交所 API 終極破解版
 @st.cache_data(ttl=3600)
 def get_institutional_investors():
-    default_data = {"外資": "尚未更新", "投信": "尚未更新", "自營": "尚未更新"}
     try:
         url = "https://openapi.twse.com.tw/v1/fund/BFI82U"
-        res = requests.get(url, timeout=5)
+        # 加上瀏覽器面具，避免被阻擋
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept': 'application/json'
+        }
+        res = requests.get(url, headers=headers, timeout=10) # 延長等待到 10 秒
+        
         if res.status_code == 200:
             data = res.json()
             foreign, trust, dealer = 0.0, 0.0, 0.0
             
             for item in data:
-                # API 給的是元，轉換成「億」
-                diff = float(item.get("Buy_Sell_Difference", 0)) / 100000000
-                code = item.get("Code", "")
-                if "外資" in code: foreign += diff
-                elif "投信" in code: trust += diff
-                elif "自營" in code: dealer += diff
+                # 智慧解析：同時包容 OpenAPI 不同版本的欄位命名
+                diff_str = item.get("difference") or item.get("Buy_Sell_Difference") or "0"
+                type_str = item.get("type") or item.get("Name") or item.get("Code") or ""
+                
+                # 清除可能帶有逗號的數字字串 (如 "1,000,000")
+                diff_str = str(diff_str).replace(",", "")
+                try:
+                    diff = float(diff_str) / 100000000 # 轉換成億
+                except:
+                    diff = 0.0
+                
+                # 模糊比對法人名稱
+                if "外資" in type_str: foreign += diff
+                elif "投信" in type_str: trust += diff
+                elif "自營" in type_str: dealer += diff
             
             def format_money(val):
                 sign = "+" if val > 0 else ""
@@ -88,9 +102,12 @@ def get_institutional_investors():
                 "投信": format_money(trust),
                 "自營": format_money(dealer)
             }
-    except:
-        pass
-    return default_data
+        else:
+            # 如果還是被擋，直接回傳錯誤代碼讓我們抓錯
+            return {"外資": f"遭擋({res.status_code})", "投信": f"遭擋({res.status_code})", "自營": f"遭擋({res.status_code})"}
+    except Exception as e:
+        # 如果是連線逾時
+        return {"外資": "連線逾時", "投信": "連線逾時", "自營": "連線逾時"}
 
 # 💡 精緻小卡 HTML
 def chip_card_html(title, value, color):
@@ -193,7 +210,7 @@ def color_strategy(val):
     return ''
 
 # ================= 5. UI 介面 =================
-st.title("台股題材動態觀測站 V69 籌碼點綴穩定版")
+st.title("台股題材動態觀測站 V70 終極證交所破解版")
 
 # 🛠️ 側邊欄：手動增加股票庫
 st.sidebar.header("🛠️ 新增自定義題材")
