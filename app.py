@@ -59,6 +59,48 @@ SYMBOL_TO_THEME = {sym: theme for theme, stocks in STOCK_DB.items() for sym in s
 LEADERS = ["2330", "2317", "3450", "4979", "3037", "2383", "3017", "2308", "2327", "2454", "3661", "1519", "2603"]
 
 # ================= 4. 核心抓取與策略函數 =================
+
+# 💡 V69 獨家新增：合法的證交所 OpenAPI 籌碼抓取
+@st.cache_data(ttl=3600)
+def get_institutional_investors():
+    default_data = {"外資": "尚未更新", "投信": "尚未更新", "自營": "尚未更新"}
+    try:
+        url = "https://openapi.twse.com.tw/v1/fund/BFI82U"
+        res = requests.get(url, timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            foreign, trust, dealer = 0.0, 0.0, 0.0
+            
+            for item in data:
+                # API 給的是元，轉換成「億」
+                diff = float(item.get("Buy_Sell_Difference", 0)) / 100000000
+                code = item.get("Code", "")
+                if "外資" in code: foreign += diff
+                elif "投信" in code: trust += diff
+                elif "自營" in code: dealer += diff
+            
+            def format_money(val):
+                sign = "+" if val > 0 else ""
+                return f"{sign}{val:,.2f} 億"
+                
+            return {
+                "外資": format_money(foreign),
+                "投信": format_money(trust),
+                "自營": format_money(dealer)
+            }
+    except:
+        pass
+    return default_data
+
+# 💡 精緻小卡 HTML
+def chip_card_html(title, value, color):
+    return f"""
+    <div style="padding: 15px; border-radius: 10px; border: 1px solid #e0e6ed; background-color: #ffffff; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+        <div style="color: #666; font-size: 15px; margin-bottom: 5px;">{title}</div>
+        <div style="color: {color}; font-size: 26px; font-weight: bold;">{value}</div>
+    </div>
+    """
+
 @st.cache_data(ttl=1800)
 def get_market_news():
     news = []
@@ -151,7 +193,7 @@ def color_strategy(val):
     return ''
 
 # ================= 5. UI 介面 =================
-st.title("台股題材動態觀測站 V68 穩定回歸版")
+st.title("台股題材動態觀測站 V69 籌碼點綴穩定版")
 
 # 🛠️ 側邊欄：手動增加股票庫
 st.sidebar.header("🛠️ 新增自定義題材")
@@ -200,6 +242,23 @@ with tab1:
     idx_data = get_indices()
     idx_cols = st.columns(len(idx_data))
     for i, (n, d) in enumerate(idx_data.items()): idx_cols[i].metric(n, d["現價"], f"{d['漲跌幅']}%")
+    
+    st.markdown("---")
+    
+    # 📊 獨家新增：證交所 OpenAPI 三大法人
+    st.subheader("📊 大盤籌碼動向 (三大法人買賣超)")
+    chip_data = get_institutional_investors()
+    
+    def get_color(val_str):
+        if "+" in val_str: return "#ff4b4b" # 台股紅漲
+        if "-" in val_str: return "#00cc96" # 台股綠跌
+        return "#333333"
+
+    c1, c2, c3 = st.columns(3)
+    with c1: st.markdown(chip_card_html("外資及陸資", chip_data['外資'], get_color(chip_data['外資'])), unsafe_allow_html=True)
+    with c2: st.markdown(chip_card_html("投信", chip_data['投信'], get_color(chip_data['投信'])), unsafe_allow_html=True)
+    with c3: st.markdown(chip_card_html("自營商", chip_data['自營'], get_color(chip_data['自營'])), unsafe_allow_html=True)
+    
     st.markdown("---")
     col_l, col_r = st.columns([1.5, 1])
     with col_l:
