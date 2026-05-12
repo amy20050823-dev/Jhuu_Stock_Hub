@@ -6,9 +6,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
-import pytz
 import time
+import random
 
 # ================= 1. 網頁配置 =================
 st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
@@ -16,7 +15,7 @@ st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
 if 'custom_themes' not in st.session_state:
     st.session_state['custom_themes'] = {}
 
-# ================= 1.6 自動抓取中文股名小爬蟲 =================
+# ================= 1.6 自動抓取中文股名 =================
 def get_tw_stock_name(symbol):
     try:
         url = f"https://tw.stock.yahoo.com/quote/{symbol}"
@@ -42,82 +41,15 @@ BASE_STOCK_DB = {
     "CPO/矽光子": {"4979": "華星光", "3450": "聯鈞", "3081": "聯亞", "3363": "上詮", "6442": "光聖", "6451": "訊芯-KY", "3163": "波若威", "4908": "前鼎", "3234": "光環"},
     "網通/石英元件": {"3042": "晶技", "3221": "台嘉碩", "8182": "加高", "2484": "希華", "3596": "智易", "5388": "中磊", "3380": "明泰", "6285": "啟碁"},
     "低軌衛星": {"2313": "華通", "3491": "昇達科", "6271": "同欣電", "3466": "致振", "3152": "璟德", "2485": "兆赫"},
-    "高速傳輸/線材": {"4966": "譜瑞-KY", "5269": "祥碩", "6756": "威鋒電子", "6661": "威健", "6653": "嘉基", "3665": "貿聯-KY", "3023": "信邦", "6102": "倚強科"},
     "AI機器人/自動化": {"2359": "所羅門", "2365": "昆盈", "6414": "樺漢", "8374": "羅昇", "4510": "高鋒", "1590": "亞德客-KY", "2049": "上銀", "4545": "銘鈺"},
-    "AI PC/工業電腦": {"2357": "華碩", "2353": "宏碁", "2395": "研華", "6245": "立端", "8114": "振樺電", "6206": "飛捷"},
-    "PCB/銅箔基板": {"2383": "台光電", "6213": "聯茂", "6274": "台燿", "2368": "金像電", "5469": "瀚宇博", "6153": "嘉聯益"},
-    "PCB上游玻纖布": {"1815": "富喬", "5340": "建榮", "5475": "德宏"},
-    "記憶體與模組": {"2408": "南亞科", "2344": "華邦電", "8299": "群聯", "3260": "威剛", "2451": "創見", "4967": "十銓"}, 
-    "被動元件": {"2327": "國巨", "2492": "華新科", "3026": "禾伸堂", "6127": "九暘", "2478": "大毅"},
-    "消費性IC/MCU": {"2454": "聯發科", "4919": "盛群", "2337": "旺宏", "3034": "聯詠", "2401": "凌陽", "4952": "凌通"},
-    "重電與能源轉型": {"1513": "中興電", "1519": "華城", "1503": "士電", "1514": "亞力", "1605": "華新", "1515": "力山", "6806": "森崴能源"},
-    "航運與航空": {"2603": "長榮", "2609": "陽明", "2615": "萬海", "2618": "長榮航", "2610": "華航", "2634": "漢翔"}
+    "AI PC/工業電腦": {"2357": "華碩", "2353": "宏碁", "2395": "研華", "6245": "立端", "8114": "振樺電", "6206": "飛捷"}
 }
 
 STOCK_DB = {**BASE_STOCK_DB, **st.session_state['custom_themes']}
 SYMBOL_TO_THEME = {sym: theme for theme, stocks in STOCK_DB.items() for sym in stocks}
 LEADERS = ["2330", "2317", "3450", "4979", "3037", "2383", "3017", "2308", "2327", "2454", "3661", "1519", "2603"]
 
-# ================= 4. 核心抓取與策略函數 =================
-
-# 💡 V70 證交所 API 終極破解版
-@st.cache_data(ttl=3600)
-def get_institutional_investors():
-    try:
-        url = "https://openapi.twse.com.tw/v1/fund/BFI82U"
-        # 加上瀏覽器面具，避免被阻擋
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'Accept': 'application/json'
-        }
-        res = requests.get(url, headers=headers, timeout=10) # 延長等待到 10 秒
-        
-        if res.status_code == 200:
-            data = res.json()
-            foreign, trust, dealer = 0.0, 0.0, 0.0
-            
-            for item in data:
-                # 智慧解析：同時包容 OpenAPI 不同版本的欄位命名
-                diff_str = item.get("difference") or item.get("Buy_Sell_Difference") or "0"
-                type_str = item.get("type") or item.get("Name") or item.get("Code") or ""
-                
-                # 清除可能帶有逗號的數字字串 (如 "1,000,000")
-                diff_str = str(diff_str).replace(",", "")
-                try:
-                    diff = float(diff_str) / 100000000 # 轉換成億
-                except:
-                    diff = 0.0
-                
-                # 模糊比對法人名稱
-                if "外資" in type_str: foreign += diff
-                elif "投信" in type_str: trust += diff
-                elif "自營" in type_str: dealer += diff
-            
-            def format_money(val):
-                sign = "+" if val > 0 else ""
-                return f"{sign}{val:,.2f} 億"
-                
-            return {
-                "外資": format_money(foreign),
-                "投信": format_money(trust),
-                "自營": format_money(dealer)
-            }
-        else:
-            # 如果還是被擋，直接回傳錯誤代碼讓我們抓錯
-            return {"外資": f"遭擋({res.status_code})", "投信": f"遭擋({res.status_code})", "自營": f"遭擋({res.status_code})"}
-    except Exception as e:
-        # 如果是連線逾時
-        return {"外資": "連線逾時", "投信": "連線逾時", "自營": "連線逾時"}
-
-# 💡 精緻小卡 HTML
-def chip_card_html(title, value, color):
-    return f"""
-    <div style="padding: 15px; border-radius: 10px; border: 1px solid #e0e6ed; background-color: #ffffff; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-        <div style="color: #666; font-size: 15px; margin-bottom: 5px;">{title}</div>
-        <div style="color: {color}; font-size: 26px; font-weight: bold;">{value}</div>
-    </div>
-    """
-
+# ================= 4. 核心抓取 =================
 @st.cache_data(ttl=1800)
 def get_market_news():
     news = []
@@ -145,37 +77,33 @@ def get_indices():
     return res
 
 @st.cache_data(ttl=600)
-def get_stock_advanced_data(stock_dict, vip_symbols=[]):
-    data_list, price_history_dict = [], {}
-    if not stock_dict: return pd.DataFrame(data_list), price_history_dict
+def get_stock_advanced_data(stock_dict):
+    data_list = []
+    if not stock_dict: return pd.DataFrame(data_list)
 
     tickers = [f"{s}.TW" for s in stock_dict.keys()] + [f"{s}.TWO" for s in stock_dict.keys()]
     try:
-        batch_long = yf.download(tickers, period="6mo", group_by="ticker", progress=False, threads=True)
-        batch_short = yf.download(tickers, period="5d", group_by="ticker", progress=False, threads=True)
-    except: return pd.DataFrame(), {}
+        # 💡 使用最穩定的批次下載
+        batch = yf.download(tickers, period="6mo", group_by="ticker", progress=False, threads=True)
+    except: return pd.DataFrame()
 
     for symbol, name in stock_dict.items():
         try:
-            hist_long, hist_short = pd.DataFrame(), pd.DataFrame()
+            hist = pd.DataFrame()
             for suffix in [".TW", ".TWO"]:
                 tkr = f"{symbol}{suffix}"
-                if isinstance(batch_long.columns, pd.MultiIndex) and tkr in batch_long.columns.get_level_values(0):
-                    hist_long = batch_long[tkr].copy().dropna(subset=['Close'])
-                if isinstance(batch_short.columns, pd.MultiIndex) and tkr in batch_short.columns.get_level_values(0):
-                    hist_short = batch_short[tkr].copy().dropna(subset=['Close'])
-                if not hist_long.empty: break
+                if tkr in batch.columns.get_level_values(0):
+                    hist = batch[tkr].copy().dropna(subset=['Close'])
+                    if not hist.empty: break
             
-            if hist_long.empty: continue
-            hist = pd.concat([hist_long, hist_short]).drop_duplicates().sort_index()
+            if hist.empty: continue
             
-            close = float(hist['Close'].iloc[-1])
-            prev_close = float(hist['Close'].iloc[-2])
+            close, prev_close = float(hist['Close'].iloc[-1]), float(hist['Close'].iloc[-2])
             change_pct = ((close - prev_close) / prev_close) * 100
             
-            hist['MA5'], hist['MA20'], hist['MA60'] = hist['Close'].rolling(5).mean(), hist['Close'].rolling(20).mean(), hist['Close'].rolling(60).mean()
+            ma20, ma60 = hist['Close'].rolling(20).mean(), hist['Close'].rolling(60).mean()
             vol_today, vol_ma5 = float(hist['Volume'].iloc[-1]), hist['Volume'].rolling(5).mean().iloc[-1]
-            bb_width = (4 * hist['Close'].rolling(20).std()) / hist['MA20']
+            bb_width = (4 * hist['Close'].rolling(20).std()) / ma20
             
             rsv = (hist['Close'] - hist['Low'].rolling(9).min()) / (hist['High'].rolling(9).max() - hist['Low'].rolling(9).min()) * 100
             k_s = rsv.ewm(com=2).mean()
@@ -187,22 +115,22 @@ def get_stock_advanced_data(stock_dict, vip_symbols=[]):
             obv_high = obv.iloc[-1] >= obv.rolling(20).max().iloc[-1] * 0.95
             res_20 = hist['High'].rolling(20).max().shift(1).iloc[-1]
             
+            # ====== 黃金推薦序權重 ======
             action, prio = "🟡 盤整 0軸下 無動能", 4
-            if close < hist['MA20'].iloc[-1]: action, prio = "🛑 破線停損 (籌碼流出)", 8
+            if close < ma20.iloc[-1]: action, prio = "🛑 破線停損 (籌碼流出)", 8
             elif (k_s.iloc[-1] > k_s.iloc[-2] or osc.iloc[-1] > osc.iloc[-2]) and obv_up and obv_high and (close > res_20 or (res_20-close)/close > 0.05):
                 action, prio = "🚀 可進場，kd obv上 無壓力(或突破)", 1
-            elif close > hist['MA20'].iloc[-1] and close > hist['MA60'].iloc[-1]: action, prio = "🟢 多頭續抱", 3
+            elif close > ma20.iloc[-1] and close > ma60.iloc[-1]: action, prio = "🟢 多頭續抱", 3
 
             crown = "👑 " if symbol in LEADERS else ""
             data_list.append({
                 "資料日期": hist.index[-1].strftime('%m/%d'), "代號": symbol, "所屬題材": SYMBOL_TO_THEME.get(symbol, "📌 自選股"),
                 "指標股": f"{crown}{name} ({symbol})", "漲跌幅(%)": round(change_pct, 2), "現價": round(close, 2),
-                "波段策略": action, "策略權重": prio, "黑馬潛力": "🐎 爆發準備" if (close > hist['MA20'].iloc[-1] and bb_width.iloc[-1] < 0.15 and obv_up) else "-",
+                "波段策略": action, "策略權重": prio, "黑馬潛力": "🐎 爆發準備" if (close > ma20.iloc[-1] and bb_width.iloc[-1] < 0.15 and obv_up) else "-",
                 "籌碼動能": "爆量流入" if vol_today > vol_ma5 * 1.5 else "量能平穩"
             })
-            price_history_dict[f"{crown}{name} ({symbol})"] = hist.tail(60)
         except: pass
-    return pd.DataFrame(data_list), price_history_dict
+    return pd.DataFrame(data_list)
 
 def color_strategy(val):
     if any(x in str(val) for x in ["🚀", "💎", "🟢"]): return 'color: #ff4b4b; font-weight: bold;'
@@ -210,108 +138,74 @@ def color_strategy(val):
     return ''
 
 # ================= 5. UI 介面 =================
-st.title("台股題材動態觀測站 V70 終極證交所破解版")
+st.title("台股題材動態觀測站 V72 回歸純淨版")
 
-# 🛠️ 側邊欄：手動增加股票庫
+# 側邊欄 1：手動增股
 st.sidebar.header("🛠️ 新增自定義題材")
-custom_theme_name = st.sidebar.text_input("題材名稱 (例: 📰 低軌衛星)", "")
-custom_theme_stocks = st.sidebar.text_input("股票代號 (例: 2485, 3324)", "")
-if st.sidebar.button("加入 / 更新題材庫"):
-    if custom_theme_name and custom_theme_stocks:
-        with st.spinner("自動抓取股票名稱中..."):
-            curr = {}
-            if custom_theme_name in BASE_STOCK_DB: curr.update(BASE_STOCK_DB[custom_theme_name])
-            if custom_theme_name in st.session_state['custom_themes']: curr.update(st.session_state['custom_themes'][custom_theme_name])
-            for s in custom_theme_stocks.split(','):
-                s = s.strip()
-                if s: curr[s] = get_tw_stock_name(s)
-            st.session_state['custom_themes'][custom_theme_name] = curr
-            st.sidebar.success(f"已成功擴充 {custom_theme_name}！")
+c_theme = st.sidebar.text_input("題材名稱", "")
+c_stocks = st.sidebar.text_input("代號 (例: 2485, 3324)", "")
+if st.sidebar.button("加入題材庫"):
+    if c_theme and c_stocks:
+        curr = st.session_state['custom_themes'].get(c_theme, {})
+        for s in c_stocks.split(','):
+            s = s.strip()
+            if s: curr[s] = get_tw_stock_name(s)
+        st.session_state['custom_themes'][c_theme] = curr
+        st.sidebar.success("更新成功！")
 
 st.sidebar.markdown("---")
 
-# 💼 側邊欄：我的持股健檢
+# 側邊欄 2：持股健檢
 st.sidebar.header("💼 我的持股健檢")
-my_holdings_input = st.sidebar.text_input("輸入代號 (如: 2301, 5388)", "")
-my_holdings_dict, vip_list = {}, []
-if my_holdings_input:
-    for s in my_holdings_input.split(','):
+my_input = st.sidebar.text_input("代號 (如: 2301, 5388)", "")
+my_holdings = {}
+if my_input:
+    for s in my_input.split(','):
         s = s.strip()
-        if s:
-            name = get_tw_stock_name(s)
-            my_holdings_dict[s] = name
-            vip_list.append(s)
+        if s: my_holdings[s] = get_tw_stock_name(s)
 
 st.sidebar.markdown("---")
-if st.sidebar.button("🔄 強制刷新 (重載資料)"):
+if st.sidebar.button("🔄 強制刷新資料"):
     st.cache_data.clear()
     st.rerun()
 
-all_flat = {**{sym: name for t in STOCK_DB.values() for sym, name in t.items()}, **my_holdings_dict}
-
-with st.spinner("🚀 資料極速加載中..."):
-    df_all, hist_all = get_stock_advanced_data(all_flat, vip_symbols=vip_list)
+# 合併清單並抓取
+all_flat = {**{sym: name for t in STOCK_DB.values() for sym, name in t.items()}, **my_holdings}
+with st.spinner("🚀 正在極速掃描技術面指標..."):
+    df_all = get_stock_advanced_data(all_flat)
 
 tab1, tab2, tab3 = st.tabs(["📊 首頁：大盤熱度", "🔍 細部題材：技術面", "🎯 波段選股 & 黑馬"])
 
 with tab1:
-    # 頂部指數
     idx_data = get_indices()
-    idx_cols = st.columns(len(idx_data))
-    for i, (n, d) in enumerate(idx_data.items()): idx_cols[i].metric(n, d["現價"], f"{d['漲跌幅']}%")
-    
-    st.markdown("---")
-    
-    # 📊 獨家新增：證交所 OpenAPI 三大法人
-    st.subheader("📊 大盤籌碼動向 (三大法人買賣超)")
-    chip_data = get_institutional_investors()
-    
-    def get_color(val_str):
-        if "+" in val_str: return "#ff4b4b" # 台股紅漲
-        if "-" in val_str: return "#00cc96" # 台股綠跌
-        return "#333333"
-
-    c1, c2, c3 = st.columns(3)
-    with c1: st.markdown(chip_card_html("外資及陸資", chip_data['外資'], get_color(chip_data['外資'])), unsafe_allow_html=True)
-    with c2: st.markdown(chip_card_html("投信", chip_data['投信'], get_color(chip_data['投信'])), unsafe_allow_html=True)
-    with c3: st.markdown(chip_card_html("自營商", chip_data['自營'], get_color(chip_data['自營'])), unsafe_allow_html=True)
-    
+    cols = st.columns(len(idx_data))
+    for i, (n, d) in enumerate(idx_data.items()): cols[i].metric(n, d["現價"], f"{d['漲跌幅']}%")
     st.markdown("---")
     col_l, col_r = st.columns([1.5, 1])
     with col_l:
         st.subheader("今日族群熱門排行")
         if not df_all.empty:
-            theme_rank = df_all.groupby('所屬題材')['漲跌幅(%)'].mean().reset_index().sort_values("漲跌幅(%)", ascending=False)
-            st.dataframe(theme_rank, height=400, use_container_width=True, hide_index=True)
-        else: st.warning("Yahoo 資料連線中，請稍候並刷新...")
+            st.dataframe(df_all.groupby('所屬題材')['漲跌幅(%)'].mean().reset_index().sort_values("漲跌幅(%)", ascending=False), height=400, use_container_width=True, hide_index=True)
     with col_r:
         st.subheader("題材偵察機 (盤面新聞)")
-        news = get_market_news()
-        with st.container(height=400):
-            for n in news: st.markdown(f"🔗 [{n['title']}]({n['link']})")
+        for n in get_market_news(): st.markdown(f"🔗 [{n['title']}]({n['link']})")
 
 with tab2:
-    sel_theme = st.selectbox("請選擇族群", list(STOCK_DB.keys()))
+    sel_theme = st.selectbox("選擇族群", list(STOCK_DB.keys()))
     if not df_all.empty:
         df_f = df_all[df_all['所屬題材'] == sel_theme].sort_values("策略權重")
         st.dataframe(df_f[['資料日期', '指標股', '漲跌幅(%)', '現價', '波段策略', '籌碼動能']].style.map(color_strategy, subset=['波段策略']), use_container_width=True)
 
 with tab3:
     if not df_all.empty:
-        # 持股與黑馬排前面
-        df_potential = df_all[df_all['黑馬潛力'] != "-"].sort_values("策略權重")
-        
-        if my_holdings_dict:
+        if my_holdings:
             st.markdown("### 💼 我的持股健檢")
-            df_my = df_all[df_all['代號'].isin(my_holdings_dict.keys())].sort_values("策略權重")
-            st.dataframe(df_my[['指標股', '漲跌幅(%)', '現價', '波段策略', '籌碼動能']].style.map(color_strategy, subset=['波段策略']), use_container_width=True)
+            st.dataframe(df_all[df_all['代號'].isin(my_holdings.keys())].sort_values("策略權重"), use_container_width=True)
         
         st.markdown("### 🐎 今日潛在爆發黑馬")
-        if not df_potential.empty:
-            st.dataframe(df_potential[['所屬題材', '指標股', '漲跌幅(%)', '現價', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略', '黑馬潛力']), use_container_width=True)
-        else:
-            st.info("今日無符合布林壓縮條件之黑馬。")
-
+        df_h = df_all[df_all['黑馬潛力'] != "-"].sort_values("策略權重")
+        st.dataframe(df_h if not df_h.empty else pd.DataFrame(), use_container_width=True)
+        
         st.markdown("---")
-        st.markdown("### 🎯 全市場波段選股總表 (按推薦序排列)")
+        st.markdown("### 🎯 全市場波段選股總表 (黃金排序)")
         st.dataframe(df_all.sort_values("策略權重")[['資料日期', '所屬題材', '指標股', '漲跌幅(%)', '現價', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略']), height=600, use_container_width=True)
