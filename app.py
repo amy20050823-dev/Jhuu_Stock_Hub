@@ -32,7 +32,7 @@ BASE_STOCK_DB = {
     "散熱管理/水冷": {"3017": "奇鋐", "3324": "雙鴻", "2421": "建準", "6230": "超眾", "8996": "高力", "3483": "力致", "3338": "泰碩", "3653": "健策"},
     "電源與BBU": {"2308": "台達電", "2301": "光寶科", "6409": "旭隼", "6121": "新普", "3211": "順達", "3323": "加百裕", "6781": "AES-KY", "2324": "仁寶"},
     "CoWoS/先進封裝": {"3131": "弘塑", "6187": "萬潤", "5443": "均豪", "6640": "均華", "6196": "帆宣", "3583": "辛耘", "2338": "光罩", "6515": "穎崴"},
-    "特用化學與光阻材料": {"4770": "上品", "1773": "勝一", "4755": "三福化", "1727": "中華化", "4763": "材料-KY", "1717": "長興", "5434": "崇越", "3010": "華立"},
+    "特用化學與光阻材料": {"4770": "上品", "1773": "勝一", "4755": "三福化", "1727": "中華化", "4763": "材料-KY", "1717": "長兴", "5434": "崇越", "3010": "華立"},
     "傳統與面板級封測": {"3711": "日月光投控", "2449": "京元電子", "6257": "矽格", "3481": "群創", "8064": "東捷", "3580": "友威科"},
     "半導體前端設備": {"3413": "京鼎", "3680": "家登", "8091": "翔名", "3055": "蔚華科"},
     "廠務工程與無塵室": {"2404": "漢唐", "3402": "漢科", "6139": "亞翔", "5536": "聖暉*", "2493": "揚博", "6117": "迎廣"},
@@ -76,8 +76,9 @@ def get_indices():
         except: res[name] = {"現價": 0, "漲跌幅": 0}
     return res
 
+# 💡 V74 關鍵更名：打破舊版緩存
 @st.cache_data(ttl=600)
-def get_stock_advanced_data(stock_dict):
+def get_stock_data_v74(stock_dict):
     data_list, price_history_dict = [], {}
     if not stock_dict: return pd.DataFrame(data_list), price_history_dict
 
@@ -135,7 +136,6 @@ def get_stock_advanced_data(stock_dict):
 
 # 💡 升級版 K 線圖：加入 MACD 與 OBV
 def plot_advanced_k_volume(hist_df, name):
-    # 分成四層：K線(50%)、成交量(15%)、MACD(15%)、OBV(20%)
     fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.5, 0.15, 0.15, 0.2])
     
     # 1. K線與均線
@@ -174,7 +174,7 @@ def color_strategy(val):
     return ''
 
 # ================= 5. UI 介面 =================
-st.title("台股題材動態觀測站 V73 濾網圖表大升級")
+st.title("台股題材動態觀測站 V74 快取破除版")
 
 # 側邊欄 1：手動增股
 st.sidebar.header("🛠️ 新增自定義題材")
@@ -207,7 +207,8 @@ if st.sidebar.button("🔄 強制刷新資料"):
 
 all_flat = {**{sym: name for t in STOCK_DB.values() for sym, name in t.items()}, **my_holdings}
 with st.spinner("🚀 正在極速掃描技術面指標..."):
-    df_all, hist_all = get_stock_advanced_data(all_flat)
+    # 💡 使用新函數名稱，避開崩潰的舊暫存檔
+    df_all, hist_all = get_stock_data_v74(all_flat)
 
 tab1, tab2, tab3 = st.tabs(["📊 首頁：大盤熱度", "🔍 細部題材：技術面", "🎯 波段選股 & 黑馬"])
 
@@ -248,7 +249,7 @@ with tab3:
         
         st.markdown("---")
         
-        # 💡 V73 新增：一鍵快速篩選器
+        # 💡 一鍵快速篩選器
         col_f1, col_f2 = st.columns([1, 2])
         with col_f1:
             st.markdown("### 🎯 全市場波段選股總表")
@@ -257,13 +258,9 @@ with tab3:
         
         df_display = df_all.sort_values("策略權重").drop(columns=['策略權重'])
         
-        # 執行過濾邏輯
-        if filter_opt == "🚀 只看進場":
-            df_display = df_display[df_display['波段策略'].str.contains("🚀")]
-        elif filter_opt == "🟢 只看多頭":
-            df_display = df_display[df_display['波段策略'].str.contains("🟢")]
-        elif filter_opt == "🛑 只看停損":
-            df_display = df_display[df_display['波段策略'].str.contains("🛑")]
+        if filter_opt == "🚀 只看進場": df_display = df_display[df_display['波段策略'].str.contains("🚀")]
+        elif filter_opt == "🟢 只看多頭": df_display = df_display[df_display['波段策略'].str.contains("🟢")]
+        elif filter_opt == "🛑 只看停損": df_display = df_display[df_display['波段策略'].str.contains("🛑")]
             
         st.dataframe(df_display[['資料日期', '所屬題材', '指標股', '漲跌幅(%)', '現價', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略']), height=600, use_container_width=True)
         
