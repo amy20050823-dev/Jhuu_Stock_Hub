@@ -75,7 +75,7 @@ def get_indices():
     return res
 
 @st.cache_data(ttl=600)
-def get_stock_data_v77(stock_dict):
+def get_stock_data_v78(stock_dict):
     data_list, price_history_dict = [], {}
     if not stock_dict: return pd.DataFrame(data_list), price_history_dict
 
@@ -119,10 +119,8 @@ def get_stock_data_v77(stock_dict):
                     bins = np.linspace(min_p, max_p, 30)
                     hist_90['Price_Bin'] = pd.cut(hist_90['Close'], bins=bins, include_lowest=True)
                     poc_price = hist_90.groupby('Price_Bin')['Volume'].sum().idxmax().mid
-                else:
-                    poc_price = close
-            except:
-                poc_price = close
+                else: poc_price = close
+            except: poc_price = close
 
             action, prio = "🟡 盤整 0軸下 無動能", 4
             if close < hist['MA20'].iloc[-1]: action, prio = "🛑 破線停損 (籌碼流出)", 8
@@ -144,13 +142,12 @@ def get_stock_data_v77(stock_dict):
         except: pass
     return pd.DataFrame(data_list), price_history_dict
 
-# 💡 V77 關鍵升級：消除假日斷層
+# 💡 V78 核心優化：線條右側加上動能與籌碼文字註解
 def plot_advanced_k_volume(hist_df, name):
     fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.5, 0.15, 0.15, 0.2])
-    
-    # 將時間索引轉換成純文字標籤，強迫 Plotly 忽略假日
     trade_dates = hist_df.index.strftime('%y/%m/%d')
-    
+    last_idx = trade_dates[-1] # 最新一天的 X 軸位置
+
     try:
         min_p, max_p = hist_df['Low'].min(), hist_df['High'].max()
         bins = np.linspace(min_p, max_p, 30)
@@ -158,20 +155,23 @@ def plot_advanced_k_volume(hist_df, name):
         poc_price = hist_df.groupby('Price_Bin')['Volume'].sum().idxmax().mid
     except: poc_price = hist_df['Close'].iloc[-1]
 
-    # K線與均線 (改用 trade_dates 作為 X 軸)
+    # 1. K線與均線
     fig.add_trace(go.Candlestick(x=trade_dates, open=hist_df['Open'], high=hist_df['High'], low=hist_df['Low'], close=hist_df['Close'], name='K線'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=trade_dates, y=hist_df['MA5'], name='5MA', line=dict(color='#FFA500', width=1)), row=1, col=1)
-    fig.add_trace(go.Scatter(x=trade_dates, y=hist_df['MA20'], name='20MA', line=dict(color='#1E90FF', width=1.5)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=trade_dates, y=hist_df['MA5'], name='5MA', line=dict(color='#FFA500', width=1.2)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=trade_dates, y=hist_df['MA20'], name='20MA', line=dict(color='#1E90FF', width=1.8)), row=1, col=1)
     
-    fig.add_hline(y=poc_price, line_dash="dash", line_color="#ff4b4b", line_width=2, 
-                 annotation_text=f"POC 密集區: {poc_price:.2f}", annotation_position="top left", 
-                 annotation_font_color="#ff4b4b", row=1, col=1)
+    fig.add_hline(y=poc_price, line_dash="dash", line_color="#ff4b4b", line_width=2, row=1, col=1)
+
+    # 💡 價格層右側標籤文字
+    fig.add_annotation(x=last_idx, y=hist_df['MA5'].iloc[-1], text="← 5MA短線", showarrow=False, xshift=45, font=dict(color='#FFA500', size=11), row=1, col=1)
+    fig.add_annotation(x=last_idx, y=hist_df['MA20'].iloc[-1], text="← 20MA月線支撐", showarrow=False, xshift=60, font=dict(color='#1E90FF', size=11), row=1, col=1)
+    fig.add_annotation(x=trade_dates[4], y=poc_price, text=f"← POC 籌碼鐵板價 ({poc_price:.1f})", showarrow=False, yshift=10, font=dict(color='#ff4b4b', size=11, family="Arial Black"), row=1, col=1)
     
-    # 成交量
+    # 2. 成交量
     colors = ['#ff4b4b' if r['Close'] >= r['Open'] else '#00cc96' for i, r in hist_df.iterrows()]
     fig.add_trace(go.Bar(x=trade_dates, y=hist_df['Volume'], name='成交量', marker_color=colors), row=2, col=1)
     
-    # MACD
+    # 3. MACD
     exp1 = hist_df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = hist_df['Close'].ewm(span=26, adjust=False).mean()
     dif = exp1 - exp2
@@ -179,20 +179,22 @@ def plot_advanced_k_volume(hist_df, name):
     osc = dif - macd
     osc_colors = ['#ff4b4b' if val >= 0 else '#00cc96' for val in osc]
     fig.add_trace(go.Bar(x=trade_dates, y=osc, name='MACD柱', marker_color=osc_colors), row=3, col=1)
-    fig.add_trace(go.Scatter(x=trade_dates, y=dif, name='DIF', line=dict(color='#1E90FF', width=1)), row=3, col=1)
-    fig.add_trace(go.Scatter(x=trade_dates, y=macd, name='MACD線', line=dict(color='#FFA500', width=1)), row=3, col=1)
+    fig.add_trace(go.Scatter(x=trade_dates, y=dif, name='DIF', line=dict(color='#1E90FF', width=1.2)), row=3, col=1)
+    fig.add_trace(go.Scatter(x=trade_dates, y=macd, name='MACD線', line=dict(color='#FFA500', width=1.2)), row=3, col=1)
+    # 💡 MACD 右側標籤文字
+    fig.add_annotation(x=last_idx, y=dif.iloc[-1], text="← MACD快線", showarrow=False, xshift=50, font=dict(color='#1E90FF', size=11), row=3, col=1)
 
-    # OBV 籌碼
+    # 4. OBV 籌碼
     obv = (np.sign(hist_df['Close'].diff()) * hist_df['Volume']).fillna(0).cumsum()
     obv_ma10 = obv.rolling(10).mean()
-    fig.add_trace(go.Scatter(x=trade_dates, y=obv, name='OBV主力線', line=dict(color='#9932CC', width=2)), row=4, col=1)
+    fig.add_trace(go.Scatter(x=trade_dates, y=obv, name='OBV主力線', line=dict(color='#9932CC', width=2.2)), row=4, col=1)
     fig.add_trace(go.Scatter(x=trade_dates, y=obv_ma10, name='OBV均線', line=dict(color='#ccc', width=1, dash='dot')), row=4, col=1)
+    # 💡 OBV 右側標籤文字
+    fig.add_annotation(x=last_idx, y=obv.iloc[-1], text="← OBV主力籌碼量", showarrow=False, xshift=65, font=dict(color='#9932CC', size=11, fontname="Arial Black"), row=4, col=1)
 
-    # 💡 更新 X 軸屬性，強制設為類別 (category)，並控制標籤數量防擁擠
-    fig.update_layout(height=750, xaxis_rangeslider_visible=False, showlegend=False, margin=dict(t=40, b=10),
-                      title=dict(text=f"{name} 動能與籌碼分析 (POC鐵板價: {poc_price:.2f})", font=dict(size=16)))
+    fig.update_layout(height=780, xaxis_rangeslider_visible=False, showlegend=False, margin=dict(t=40, b=10, r=120), # 右側邊距拉寬防字體切掉
+                      title=dict(text=f"{name} 走勢與法人級指標分析", font=dict(size=16)))
     fig.update_xaxes(type='category', nticks=15)
-    
     return fig
 
 def color_strategy(val):
@@ -201,7 +203,7 @@ def color_strategy(val):
     return ''
 
 # ================= 5. UI 介面 =================
-st.title("台股題材動態觀測站 V77 無縫圖表版")
+st.title("台股題材動態觀測站 V78 視覺直覺版")
 
 # 側邊欄 1：手動增股
 st.sidebar.header("🛠️ 新增自定義題材")
@@ -220,7 +222,7 @@ st.sidebar.markdown("---")
 
 # 側邊欄 2：持股健檢
 st.sidebar.header("💼 我的持股健檢")
-my_input = st.sidebar.text_input("代號 (如: 2301, 5388)", "")
+my_input = st.sidebar.text_input("代號 (如: 2301, 1727)", "")
 my_holdings = {}
 if my_input:
     for s in my_input.split(','):
@@ -234,7 +236,7 @@ if st.sidebar.button("🔄 強制刷新資料"):
 
 all_flat = {**{sym: name for t in STOCK_DB.values() for sym, name in t.items()}, **my_holdings}
 with st.spinner("🚀 正在極速掃描技術面指標與計算 POC 鐵板價..."):
-    df_all, hist_all = get_stock_data_v77(all_flat)
+    df_all, hist_all = get_stock_data_v78(all_flat)
 
 tab1, tab2, tab3 = st.tabs(["📊 首頁：大盤熱度", "🔍 細部題材：技術面", "🎯 波段選股 & 黑馬"])
 
@@ -264,10 +266,18 @@ with tab2:
 
 with tab3:
     if not df_all.empty:
+        # 💡 V78 升級：直接把看自己持股圖表的功能加到最上面
         if my_holdings:
             st.markdown("### 💼 我的持股健檢")
             df_my = df_all[df_all['代號'].isin(my_holdings.keys())].sort_values("策略權重").drop(columns=['策略權重'])
             st.dataframe(df_my[['指標股', '漲跌幅(%)', '現價', 'POC價位', '波段策略', '籌碼動能']].style.map(color_strategy, subset=['波段策略']), use_container_width=True)
+            
+            # 🔥 持股 K 線圖看盤放大鏡
+            st.markdown("#### 🔍 我的持股線型觀測")
+            my_target = st.selectbox("選擇要分析的個人持股", df_my['指標股'].tolist(), key="my_t3_select")
+            if my_target in hist_all:
+                st.plotly_chart(plot_advanced_k_volume(hist_all[my_target], my_target), use_container_width=True, key=f"my_chart_{my_target}")
+            st.markdown("---")
         
         st.markdown("### 🐎 今日潛在爆發黑馬")
         df_h = df_all[df_all['黑馬潛力'] != "-"].sort_values("策略權重").drop(columns=['策略權重'])
