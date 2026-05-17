@@ -74,9 +74,8 @@ def get_indices():
         except: res[name] = {"現價": 0, "漲跌幅": 0}
     return res
 
-# 💡 V76 新增：提前在表格計算 POC
 @st.cache_data(ttl=600)
-def get_stock_data_v76(stock_dict):
+def get_stock_data_v77(stock_dict):
     data_list, price_history_dict = [], {}
     if not stock_dict: return pd.DataFrame(data_list), price_history_dict
 
@@ -113,14 +112,12 @@ def get_stock_data_v76(stock_dict):
             obv_high = obv.iloc[-1] >= obv.rolling(20).max().iloc[-1] * 0.95
             res_20 = hist['High'].rolling(20).max().shift(1).iloc[-1]
             
-            # 💡 計算 POC (抓出過去 90 天最密集的價位)
             try:
                 hist_90 = hist.tail(90).copy()
                 min_p, max_p = hist_90['Low'].min(), hist_90['High'].max()
                 if min_p < max_p:
                     bins = np.linspace(min_p, max_p, 30)
                     hist_90['Price_Bin'] = pd.cut(hist_90['Close'], bins=bins, include_lowest=True)
-                    # 避免舊版 pandas 報錯，不加 observed=False
                     poc_price = hist_90.groupby('Price_Bin')['Volume'].sum().idxmax().mid
                 else:
                     poc_price = close
@@ -138,7 +135,7 @@ def get_stock_data_v76(stock_dict):
             data_list.append({
                 "資料日期": hist.index[-1].strftime('%m/%d'), "代號": symbol, "所屬題材": SYMBOL_TO_THEME.get(symbol, "📌 自選股"),
                 "指標股": display_name, "漲跌幅(%)": round(change_pct, 2), "現價": round(close, 2), 
-                "POC價位": round(poc_price, 2),  # 💡 成功加入新欄位
+                "POC價位": round(poc_price, 2),
                 "波段策略": action, "策略權重": prio, "黑馬潛力": "🐎 爆發準備" if (close > hist['MA20'].iloc[-1] and bb_width.iloc[-1] < 0.15 and obv_up) else "-",
                 "籌碼動能": "爆量流入" if vol_today > vol_ma5 * 1.5 else "量能平穩"
             })
@@ -147,10 +144,13 @@ def get_stock_data_v76(stock_dict):
         except: pass
     return pd.DataFrame(data_list), price_history_dict
 
+# 💡 V77 關鍵升級：消除假日斷層
 def plot_advanced_k_volume(hist_df, name):
     fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.5, 0.15, 0.15, 0.2])
     
-    # 計算 POC
+    # 將時間索引轉換成純文字標籤，強迫 Plotly 忽略假日
+    trade_dates = hist_df.index.strftime('%y/%m/%d')
+    
     try:
         min_p, max_p = hist_df['Low'].min(), hist_df['High'].max()
         bins = np.linspace(min_p, max_p, 30)
@@ -158,10 +158,10 @@ def plot_advanced_k_volume(hist_df, name):
         poc_price = hist_df.groupby('Price_Bin')['Volume'].sum().idxmax().mid
     except: poc_price = hist_df['Close'].iloc[-1]
 
-    # K線與均線
-    fig.add_trace(go.Candlestick(x=hist_df.index, open=hist_df['Open'], high=hist_df['High'], low=hist_df['Low'], close=hist_df['Close'], name='K線'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['MA5'], name='5MA', line=dict(color='#FFA500', width=1)), row=1, col=1)
-    fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['MA20'], name='20MA', line=dict(color='#1E90FF', width=1.5)), row=1, col=1)
+    # K線與均線 (改用 trade_dates 作為 X 軸)
+    fig.add_trace(go.Candlestick(x=trade_dates, open=hist_df['Open'], high=hist_df['High'], low=hist_df['Low'], close=hist_df['Close'], name='K線'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=trade_dates, y=hist_df['MA5'], name='5MA', line=dict(color='#FFA500', width=1)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=trade_dates, y=hist_df['MA20'], name='20MA', line=dict(color='#1E90FF', width=1.5)), row=1, col=1)
     
     fig.add_hline(y=poc_price, line_dash="dash", line_color="#ff4b4b", line_width=2, 
                  annotation_text=f"POC 密集區: {poc_price:.2f}", annotation_position="top left", 
@@ -169,7 +169,7 @@ def plot_advanced_k_volume(hist_df, name):
     
     # 成交量
     colors = ['#ff4b4b' if r['Close'] >= r['Open'] else '#00cc96' for i, r in hist_df.iterrows()]
-    fig.add_trace(go.Bar(x=hist_df.index, y=hist_df['Volume'], name='成交量', marker_color=colors), row=2, col=1)
+    fig.add_trace(go.Bar(x=trade_dates, y=hist_df['Volume'], name='成交量', marker_color=colors), row=2, col=1)
     
     # MACD
     exp1 = hist_df['Close'].ewm(span=12, adjust=False).mean()
@@ -178,19 +178,21 @@ def plot_advanced_k_volume(hist_df, name):
     macd = dif.ewm(span=9, adjust=False).mean()
     osc = dif - macd
     osc_colors = ['#ff4b4b' if val >= 0 else '#00cc96' for val in osc]
-    fig.add_trace(go.Bar(x=hist_df.index, y=osc, name='MACD柱', marker_color=osc_colors), row=3, col=1)
-    fig.add_trace(go.Scatter(x=hist_df.index, y=dif, name='DIF', line=dict(color='#1E90FF', width=1)), row=3, col=1)
-    fig.add_trace(go.Scatter(x=hist_df.index, y=macd, name='MACD線', line=dict(color='#FFA500', width=1)), row=3, col=1)
+    fig.add_trace(go.Bar(x=trade_dates, y=osc, name='MACD柱', marker_color=osc_colors), row=3, col=1)
+    fig.add_trace(go.Scatter(x=trade_dates, y=dif, name='DIF', line=dict(color='#1E90FF', width=1)), row=3, col=1)
+    fig.add_trace(go.Scatter(x=trade_dates, y=macd, name='MACD線', line=dict(color='#FFA500', width=1)), row=3, col=1)
 
     # OBV 籌碼
     obv = (np.sign(hist_df['Close'].diff()) * hist_df['Volume']).fillna(0).cumsum()
     obv_ma10 = obv.rolling(10).mean()
-    fig.add_trace(go.Scatter(x=hist_df.index, y=obv, name='OBV主力線', line=dict(color='#9932CC', width=2)), row=4, col=1)
-    fig.add_trace(go.Scatter(x=hist_df.index, y=obv_ma10, name='OBV均線', line=dict(color='#ccc', width=1, dash='dot')), row=4, col=1)
+    fig.add_trace(go.Scatter(x=trade_dates, y=obv, name='OBV主力線', line=dict(color='#9932CC', width=2)), row=4, col=1)
+    fig.add_trace(go.Scatter(x=trade_dates, y=obv_ma10, name='OBV均線', line=dict(color='#ccc', width=1, dash='dot')), row=4, col=1)
 
-    # 💡 在圖表標題加上 POC，防走失
+    # 💡 更新 X 軸屬性，強制設為類別 (category)，並控制標籤數量防擁擠
     fig.update_layout(height=750, xaxis_rangeslider_visible=False, showlegend=False, margin=dict(t=40, b=10),
                       title=dict(text=f"{name} 動能與籌碼分析 (POC鐵板價: {poc_price:.2f})", font=dict(size=16)))
+    fig.update_xaxes(type='category', nticks=15)
+    
     return fig
 
 def color_strategy(val):
@@ -199,7 +201,7 @@ def color_strategy(val):
     return ''
 
 # ================= 5. UI 介面 =================
-st.title("台股題材動態觀測站 V76 POC解碼版")
+st.title("台股題材動態觀測站 V77 無縫圖表版")
 
 # 側邊欄 1：手動增股
 st.sidebar.header("🛠️ 新增自定義題材")
@@ -232,7 +234,7 @@ if st.sidebar.button("🔄 強制刷新資料"):
 
 all_flat = {**{sym: name for t in STOCK_DB.values() for sym, name in t.items()}, **my_holdings}
 with st.spinner("🚀 正在極速掃描技術面指標與計算 POC 鐵板價..."):
-    df_all, hist_all = get_stock_data_v76(all_flat)
+    df_all, hist_all = get_stock_data_v77(all_flat)
 
 tab1, tab2, tab3 = st.tabs(["📊 首頁：大盤熱度", "🔍 細部題材：技術面", "🎯 波段選股 & 黑馬"])
 
@@ -254,7 +256,6 @@ with tab2:
     sel_theme = st.selectbox("選擇族群", list(STOCK_DB.keys()))
     if not df_all.empty:
         df_f = df_all[df_all['所屬題材'] == sel_theme].sort_values("策略權重").drop(columns=['策略權重'])
-        # 💡 將 POC價位 放入顯示欄位中
         st.dataframe(df_f[['資料日期', '指標股', '漲跌幅(%)', '現價', 'POC價位', '波段策略', '籌碼動能']].style.map(color_strategy, subset=['波段策略']), use_container_width=True)
         
         st.markdown("---")
