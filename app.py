@@ -32,7 +32,7 @@ BASE_STOCK_DB = {
     "散熱管理/水冷": {"3017": "奇鋐", "3324": "雙鴻", "2421": "建準", "6230": "超眾", "8996": "高力", "3483": "力致", "3338": "泰碩", "3653": "健策"},
     "電源與BBU": {"2308": "台達電", "2301": "光寶科", "6409": "旭隼", "6121": "新普", "3211": "順達", "3323": "加百裕", "6781": "AES-KY", "2324": "仁寶"},
     "CoWoS/先進封裝": {"3131": "弘塑", "6187": "萬潤", "5443": "均豪", "6640": "均華", "6196": "帆宣", "3583": "辛耘", "2338": "光罩", "6515": "穎崴"},
-    "特用化學與光阻材料": {"4770": "上品", "1773": "勝一", "4755": "三福化", "1727": "中華化", "4763": "材料-KY", "1717": "長兴", "5434": "崇越", "3010": "華立"},
+    "特用化學與光阻材料": {"4770": "上品", "1773": "勝一", "4755": "三福化", "1727": "中華化", "4763": "材料-KY", "1717": "長興", "5434": "崇越", "3010": "華立"},
     "傳統與面板級封測": {"3711": "日月光投控", "2449": "京元電子", "6257": "矽格", "3481": "群創", "8064": "東捷", "3580": "友威科"},
     "半導體前端設備": {"3413": "京鼎", "3680": "家登", "8091": "翔名", "3055": "蔚華科"},
     "廠務工程與無塵室": {"2404": "漢唐", "3402": "漢科", "6139": "亞翔", "5536": "聖暉*", "2493": "揚博", "6117": "迎廣"},
@@ -76,9 +76,8 @@ def get_indices():
         except: res[name] = {"現價": 0, "漲跌幅": 0}
     return res
 
-# 💡 V74 關鍵更名：打破舊版緩存
 @st.cache_data(ttl=600)
-def get_stock_data_v74(stock_dict):
+def get_stock_data_v75(stock_dict):
     data_list, price_history_dict = [], {}
     if not stock_dict: return pd.DataFrame(data_list), price_history_dict
 
@@ -130,24 +129,40 @@ def get_stock_data_v74(stock_dict):
                 "籌碼動能": "爆量流入" if vol_today > vol_ma5 * 1.5 else "量能平穩"
             })
             
-            price_history_dict[display_name] = hist.tail(90) # 多抓一點天數給圖表用
+            price_history_dict[display_name] = hist.tail(90) # 提供 90 天做圖表與 POC 計算
         except: pass
     return pd.DataFrame(data_list), price_history_dict
 
-# 💡 升級版 K 線圖：加入 MACD 與 OBV
+# 💡 V75 新增：動態計算與標示 POC (Point of Control)
 def plot_advanced_k_volume(hist_df, name):
     fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.5, 0.15, 0.15, 0.2])
     
-    # 1. K線與均線
+    # --- 1. 計算 POC (過去 90 天成交量最密集價位) ---
+    # 將最高到最低價切成 30 個區間
+    min_p, max_p = hist_df['Low'].min(), hist_df['High'].max()
+    bins = np.linspace(min_p, max_p, 30)
+    # 把每天的收盤價丟進區間，並把那一天的成交量疊加上去
+    hist_df['Price_Bin'] = pd.cut(hist_df['Close'], bins=bins)
+    vol_profile = hist_df.groupby('Price_Bin')['Volume'].sum()
+    # 找出成交量最大的那個區間，取中間值作為 POC
+    poc_bin = vol_profile.idxmax()
+    poc_price = poc_bin.mid
+
+    # --- 2. K線與均線 ---
     fig.add_trace(go.Candlestick(x=hist_df.index, open=hist_df['Open'], high=hist_df['High'], low=hist_df['Low'], close=hist_df['Close'], name='K線'), row=1, col=1)
     fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['MA5'], name='5MA', line=dict(color='#FFA500', width=1)), row=1, col=1)
     fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['MA20'], name='20MA', line=dict(color='#1E90FF', width=1.5)), row=1, col=1)
     
-    # 2. 成交量
+    # 💡 畫出紅色的 POC 籌碼密集警戒線
+    fig.add_hline(y=poc_price, line_dash="dash", line_color="#ff4b4b", line_width=2, 
+                 annotation_text=f"POC 密集區: {poc_price:.2f}", annotation_position="top left", 
+                 annotation_font_color="#ff4b4b", row=1, col=1)
+    
+    # --- 3. 成交量 ---
     colors = ['#ff4b4b' if r['Close'] >= r['Open'] else '#00cc96' for i, r in hist_df.iterrows()]
     fig.add_trace(go.Bar(x=hist_df.index, y=hist_df['Volume'], name='成交量', marker_color=colors), row=2, col=1)
     
-    # 3. MACD
+    # --- 4. MACD ---
     exp1 = hist_df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = hist_df['Close'].ewm(span=26, adjust=False).mean()
     dif = exp1 - exp2
@@ -158,7 +173,7 @@ def plot_advanced_k_volume(hist_df, name):
     fig.add_trace(go.Scatter(x=hist_df.index, y=dif, name='DIF', line=dict(color='#1E90FF', width=1)), row=3, col=1)
     fig.add_trace(go.Scatter(x=hist_df.index, y=macd, name='MACD線', line=dict(color='#FFA500', width=1)), row=3, col=1)
 
-    # 4. OBV 籌碼
+    # --- 5. OBV 籌碼 ---
     obv = (np.sign(hist_df['Close'].diff()) * hist_df['Volume']).fillna(0).cumsum()
     obv_ma10 = obv.rolling(10).mean()
     fig.add_trace(go.Scatter(x=hist_df.index, y=obv, name='OBV主力線', line=dict(color='#9932CC', width=2)), row=4, col=1)
@@ -174,7 +189,7 @@ def color_strategy(val):
     return ''
 
 # ================= 5. UI 介面 =================
-st.title("台股題材動態觀測站 V74 快取破除版")
+st.title("台股題材動態觀測站 V75 籌碼透視版")
 
 # 側邊欄 1：手動增股
 st.sidebar.header("🛠️ 新增自定義題材")
@@ -207,8 +222,7 @@ if st.sidebar.button("🔄 強制刷新資料"):
 
 all_flat = {**{sym: name for t in STOCK_DB.values() for sym, name in t.items()}, **my_holdings}
 with st.spinner("🚀 正在極速掃描技術面指標..."):
-    # 💡 使用新函數名稱，避開崩潰的舊暫存檔
-    df_all, hist_all = get_stock_data_v74(all_flat)
+    df_all, hist_all = get_stock_data_v75(all_flat)
 
 tab1, tab2, tab3 = st.tabs(["📊 首頁：大盤熱度", "🔍 細部題材：技術面", "🎯 波段選股 & 黑馬"])
 
@@ -249,7 +263,6 @@ with tab3:
         
         st.markdown("---")
         
-        # 💡 一鍵快速篩選器
         col_f1, col_f2 = st.columns([1, 2])
         with col_f1:
             st.markdown("### 🎯 全市場波段選股總表")
