@@ -74,9 +74,8 @@ def get_indices():
         except: res[name] = {"現價": 0, "漲跌幅": 0}
     return res
 
-# 💡 V79 更名並升級 POC 演算法
 @st.cache_data(ttl=600)
-def get_stock_data_v79(stock_dict):
+def get_stock_data_v80(stock_dict):
     data_list, price_history_dict = [], {}
     if not stock_dict: return pd.DataFrame(data_list), price_history_dict
 
@@ -113,13 +112,12 @@ def get_stock_data_v79(stock_dict):
             obv_high = obv.iloc[-1] >= obv.rolling(20).max().iloc[-1] * 0.95
             res_20 = hist['High'].rolling(20).max().shift(1).iloc[-1]
             
-            # 💡 V79 POC 演算法升級：改抓 60 天(一季)，並使用「典型價格 (Typical Price)」
             try:
                 hist_poc = hist.tail(60).copy()
                 min_p, max_p = hist_poc['Low'].min(), hist_poc['High'].max()
                 if min_p < max_p:
-                    bins = np.linspace(min_p, max_p, 40) # 切 40 等份，更精細
-                    typical_price = (hist_poc['High'] + hist_poc['Low'] + hist_poc['Close']) / 3 # 重心理論價
+                    bins = np.linspace(min_p, max_p, 40) 
+                    typical_price = (hist_poc['High'] + hist_poc['Low'] + hist_poc['Close']) / 3
                     hist_poc['Price_Bin'] = pd.cut(typical_price, bins=bins, include_lowest=True)
                     poc_price = hist_poc.groupby('Price_Bin')['Volume'].sum().idxmax().mid
                 else: poc_price = close
@@ -150,7 +148,6 @@ def plot_advanced_k_volume(hist_df, name):
     trade_dates = hist_df.index.strftime('%y/%m/%d')
     last_idx = trade_dates[-1]
 
-    # 💡 畫圖用的 POC 也同步升級
     try:
         hist_poc = hist_df.tail(60).copy()
         min_p, max_p = hist_poc['Low'].min(), hist_poc['High'].max()
@@ -164,10 +161,11 @@ def plot_advanced_k_volume(hist_df, name):
     fig.add_trace(go.Scatter(x=trade_dates, y=hist_df['MA5'], name='5MA', line=dict(color='#FFA500', width=1.2)), row=1, col=1)
     fig.add_trace(go.Scatter(x=trade_dates, y=hist_df['MA20'], name='20MA', line=dict(color='#1E90FF', width=1.8)), row=1, col=1)
     
-    # 標示 POC
     fig.add_hline(y=poc_price, line_dash="dash", line_color="#ff4b4b", line_width=2, row=1, col=1)
     fig.add_annotation(x=last_idx, y=hist_df['MA5'].iloc[-1], text="← 5MA短線", showarrow=False, xshift=45, font=dict(color='#FFA500', size=11), row=1, col=1)
     fig.add_annotation(x=last_idx, y=hist_df['MA20'].iloc[-1], text="← 20MA月線", showarrow=False, xshift=55, font=dict(color='#1E90FF', size=11), row=1, col=1)
+    
+    # 💡 修復 Bug：把字體設定從 fontname 改回正確的 family
     fig.add_annotation(x=trade_dates[4], y=poc_price, text=f"← POC(季) 鐵板價 ({poc_price:.1f})", showarrow=False, yshift=10, font=dict(color='#ff4b4b', size=11, family="Arial Black"), row=1, col=1)
     
     colors = ['#ff4b4b' if r['Close'] >= r['Open'] else '#00cc96' for i, r in hist_df.iterrows()]
@@ -188,7 +186,9 @@ def plot_advanced_k_volume(hist_df, name):
     obv_ma10 = obv.rolling(10).mean()
     fig.add_trace(go.Scatter(x=trade_dates, y=obv, name='OBV主力線', line=dict(color='#9932CC', width=2.2)), row=4, col=1)
     fig.add_trace(go.Scatter(x=trade_dates, y=obv_ma10, name='OBV均線', line=dict(color='#ccc', width=1, dash='dot')), row=4, col=1)
-    fig.add_annotation(x=last_idx, y=obv.iloc[-1], text="← OBV主力籌碼", showarrow=False, xshift=65, font=dict(color='#9932CC', size=11, fontname="Arial Black"), row=4, col=1)
+    
+    # 💡 修復 Bug：把字體設定從 fontname 改回正確的 family
+    fig.add_annotation(x=last_idx, y=obv.iloc[-1], text="← OBV主力籌碼", showarrow=False, xshift=65, font=dict(color='#9932CC', size=11, family="Arial Black"), row=4, col=1)
 
     fig.update_layout(height=780, xaxis_rangeslider_visible=False, showlegend=False, margin=dict(t=40, b=10, r=120),
                       title=dict(text=f"{name} 走勢與法人級指標分析", font=dict(size=16)))
@@ -201,7 +201,7 @@ def color_strategy(val):
     return ''
 
 # ================= 5. UI 介面 =================
-st.title("台股題材動態觀測站 V79 機構 POC 校準版")
+st.title("台股題材動態觀測站 V80 抓漏除錯版")
 
 # 側邊欄 1：手動增股
 st.sidebar.header("🛠️ 新增自定義題材")
@@ -234,7 +234,7 @@ if st.sidebar.button("🔄 強制刷新資料"):
 
 all_flat = {**{sym: name for t in STOCK_DB.values() for sym, name in t.items()}, **my_holdings}
 with st.spinner("🚀 正在極速掃描技術面指標與計算季 POC 鐵板價..."):
-    df_all, hist_all = get_stock_data_v79(all_flat)
+    df_all, hist_all = get_stock_data_v80(all_flat)
 
 tab1, tab2, tab3 = st.tabs(["📊 首頁：大盤熱度", "🔍 細部題材：技術面", "🎯 波段選股 & 黑馬"])
 
