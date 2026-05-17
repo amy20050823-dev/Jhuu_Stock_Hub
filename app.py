@@ -74,8 +74,30 @@ def get_indices():
         except: res[name] = {"現價": 0, "漲跌幅": 0}
     return res
 
+# 💡 V81 新增：單檔全台任意股票即時抓取引擎
+@st.cache_data(ttl=300)
+def fetch_single_stock(symbol):
+    try:
+        symbol = str(symbol).strip()
+        tkr = f"{symbol}.TW"
+        hist = yf.Ticker(tkr).history(period="6mo")
+        if hist.empty:
+            tkr = f"{symbol}.TWO"
+            hist = yf.Ticker(tkr).history(period="6mo")
+        if hist.empty or len(hist) < 20: return None, ""
+        
+        name = get_tw_stock_name(symbol)
+        display_name = f"🎯 搜尋結果: {name} ({symbol})"
+        
+        hist['MA5'] = hist['Close'].rolling(5).mean()
+        hist['MA20'] = hist['Close'].rolling(20).mean()
+        
+        return hist, display_name
+    except:
+        return None, ""
+
 @st.cache_data(ttl=600)
-def get_stock_data_v80(stock_dict):
+def get_stock_data_v81(stock_dict):
     data_list, price_history_dict = [], {}
     if not stock_dict: return pd.DataFrame(data_list), price_history_dict
 
@@ -165,7 +187,6 @@ def plot_advanced_k_volume(hist_df, name):
     fig.add_annotation(x=last_idx, y=hist_df['MA5'].iloc[-1], text="← 5MA短線", showarrow=False, xshift=45, font=dict(color='#FFA500', size=11), row=1, col=1)
     fig.add_annotation(x=last_idx, y=hist_df['MA20'].iloc[-1], text="← 20MA月線", showarrow=False, xshift=55, font=dict(color='#1E90FF', size=11), row=1, col=1)
     
-    # 💡 修復 Bug：把字體設定從 fontname 改回正確的 family
     fig.add_annotation(x=trade_dates[4], y=poc_price, text=f"← POC(季) 鐵板價 ({poc_price:.1f})", showarrow=False, yshift=10, font=dict(color='#ff4b4b', size=11, family="Arial Black"), row=1, col=1)
     
     colors = ['#ff4b4b' if r['Close'] >= r['Open'] else '#00cc96' for i, r in hist_df.iterrows()]
@@ -187,7 +208,6 @@ def plot_advanced_k_volume(hist_df, name):
     fig.add_trace(go.Scatter(x=trade_dates, y=obv, name='OBV主力線', line=dict(color='#9932CC', width=2.2)), row=4, col=1)
     fig.add_trace(go.Scatter(x=trade_dates, y=obv_ma10, name='OBV均線', line=dict(color='#ccc', width=1, dash='dot')), row=4, col=1)
     
-    # 💡 修復 Bug：把字體設定從 fontname 改回正確的 family
     fig.add_annotation(x=last_idx, y=obv.iloc[-1], text="← OBV主力籌碼", showarrow=False, xshift=65, font=dict(color='#9932CC', size=11, family="Arial Black"), row=4, col=1)
 
     fig.update_layout(height=780, xaxis_rangeslider_visible=False, showlegend=False, margin=dict(t=40, b=10, r=120),
@@ -201,7 +221,7 @@ def color_strategy(val):
     return ''
 
 # ================= 5. UI 介面 =================
-st.title("台股題材動態觀測站 V80 抓漏除錯版")
+st.title("台股題材動態觀測站 V81 萬物搜尋雷達版")
 
 # 側邊欄 1：手動增股
 st.sidebar.header("🛠️ 新增自定義題材")
@@ -234,7 +254,7 @@ if st.sidebar.button("🔄 強制刷新資料"):
 
 all_flat = {**{sym: name for t in STOCK_DB.values() for sym, name in t.items()}, **my_holdings}
 with st.spinner("🚀 正在極速掃描技術面指標與計算季 POC 鐵板價..."):
-    df_all, hist_all = get_stock_data_v80(all_flat)
+    df_all, hist_all = get_stock_data_v81(all_flat)
 
 tab1, tab2, tab3 = st.tabs(["📊 首頁：大盤熱度", "🔍 細部題材：技術面", "🎯 波段選股 & 黑馬"])
 
@@ -259,22 +279,24 @@ with tab2:
         st.dataframe(df_f[['資料日期', '指標股', '漲跌幅(%)', '現價', 'POC價位(季)', '波段策略', '籌碼動能']].style.map(color_strategy, subset=['波段策略']), use_container_width=True)
         
         st.markdown("---")
-        target = st.selectbox("查看詳細技術線型", df_f['指標股'].tolist(), key="t2")
-        if target in hist_all: st.plotly_chart(plot_advanced_k_volume(hist_all[target], target), use_container_width=True)
+        # 💡 圖表與搜尋並排
+        st.markdown("### 🔍 個股技術線型 X 光機")
+        col_t2_1, col_t2_2 = st.columns(2)
+        with col_t2_1:
+            target = st.selectbox("📋 從清單選擇", df_f['指標股'].tolist(), key="t2")
+        with col_t2_2:
+            search_t2 = st.text_input("🎯 或輸入任意代號搜尋 (如: 2330)", "", key="t2_search")
+            
+        if search_t2:
+            with st.spinner(f"正在調閱 {search_t2} 機密籌碼..."):
+                s_hist, s_name = fetch_single_stock(search_t2)
+                if s_hist is not None: st.plotly_chart(plot_advanced_k_volume(s_hist, s_name), use_container_width=True)
+                else: st.error(f"找不到 {search_t2}，請確認代號是否正確！")
+        else:
+            if target in hist_all: st.plotly_chart(plot_advanced_k_volume(hist_all[target], target), use_container_width=True)
 
 with tab3:
     if not df_all.empty:
-        if my_holdings:
-            st.markdown("### 💼 我的持股健檢")
-            df_my = df_all[df_all['代號'].isin(my_holdings.keys())].sort_values("策略權重").drop(columns=['策略權重'])
-            st.dataframe(df_my[['指標股', '漲跌幅(%)', '現價', 'POC價位(季)', '波段策略', '籌碼動能']].style.map(color_strategy, subset=['波段策略']), use_container_width=True)
-            
-            st.markdown("#### 🔍 我的持股線型觀測")
-            my_target = st.selectbox("選擇要分析的個人持股", df_my['指標股'].tolist(), key="my_t3_select")
-            if my_target in hist_all:
-                st.plotly_chart(plot_advanced_k_volume(hist_all[my_target], my_target), use_container_width=True, key=f"my_chart_{my_target}")
-            st.markdown("---")
-        
         st.markdown("### 🐎 今日潛在爆發黑馬")
         df_h = df_all[df_all['黑馬潛力'] != "-"].sort_values("策略權重").drop(columns=['策略權重'])
         st.dataframe(df_h[['所屬題材', '指標股', '漲跌幅(%)', '現價', 'POC價位(季)', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略', '黑馬潛力']) if not df_h.empty else pd.DataFrame(), use_container_width=True)
@@ -296,5 +318,18 @@ with tab3:
         st.dataframe(df_display[['資料日期', '所屬題材', '指標股', '漲跌幅(%)', '現價', 'POC價位(季)', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略']), height=600, use_container_width=True)
         
         st.markdown("---")
-        target_a = st.selectbox("查看全市場詳細技術線型", df_display['指標股'].tolist(), key="t3")
-        if target_a in hist_all: st.plotly_chart(plot_advanced_k_volume(hist_all[target_a], target_a), use_container_width=True)
+        # 💡 圖表與搜尋並排
+        st.markdown("### 🔍 個股技術線型 X 光機")
+        col_t3_1, col_t3_2 = st.columns(2)
+        with col_t3_1:
+            target_a = st.selectbox("📋 從全市場清單選擇", df_display['指標股'].tolist(), key="t3")
+        with col_t3_2:
+            search_t3 = st.text_input("🎯 或輸入全台任意代號搜尋 (如: 2330)", "", key="t3_search")
+            
+        if search_t3:
+            with st.spinner(f"正在調閱 {search_t3} 機密籌碼..."):
+                s_hist, s_name = fetch_single_stock(search_t3)
+                if s_hist is not None: st.plotly_chart(plot_advanced_k_volume(s_hist, s_name), use_container_width=True)
+                else: st.error(f"找不到 {search_t3}，請確認代號是否正確！")
+        else:
+            if target_a in hist_all: st.plotly_chart(plot_advanced_k_volume(hist_all[target_a], target_a), use_container_width=True)
