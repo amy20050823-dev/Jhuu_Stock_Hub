@@ -78,14 +78,13 @@ def get_indices():
 
 @st.cache_data(ttl=600)
 def get_stock_advanced_data(stock_dict):
-    data_list = []
-    if not stock_dict: return pd.DataFrame(data_list)
+    data_list, price_history_dict = [], {}
+    if not stock_dict: return pd.DataFrame(data_list), price_history_dict
 
     tickers = [f"{s}.TW" for s in stock_dict.keys()] + [f"{s}.TWO" for s in stock_dict.keys()]
     try:
-        # 💡 使用最穩定的批次下載
         batch = yf.download(tickers, period="6mo", group_by="ticker", progress=False, threads=True)
-    except: return pd.DataFrame()
+    except: return pd.DataFrame(), {}
 
     for symbol, name in stock_dict.items():
         try:
@@ -93,7 +92,7 @@ def get_stock_advanced_data(stock_dict):
             for suffix in [".TW", ".TWO"]:
                 tkr = f"{symbol}{suffix}"
                 if tkr in batch.columns.get_level_values(0):
-                    hist = batch[tkr].copy().dropna(subset=['Close'])
+                    hist = batch[tkr].copy().dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low'])
                     if not hist.empty: break
             
             if hist.empty: continue
@@ -101,9 +100,9 @@ def get_stock_advanced_data(stock_dict):
             close, prev_close = float(hist['Close'].iloc[-1]), float(hist['Close'].iloc[-2])
             change_pct = ((close - prev_close) / prev_close) * 100
             
-            ma20, ma60 = hist['Close'].rolling(20).mean(), hist['Close'].rolling(60).mean()
+            hist['MA5'], hist['MA20'], hist['MA60'] = hist['Close'].rolling(5).mean(), hist['Close'].rolling(20).mean(), hist['Close'].rolling(60).mean()
             vol_today, vol_ma5 = float(hist['Volume'].iloc[-1]), hist['Volume'].rolling(5).mean().iloc[-1]
-            bb_width = (4 * hist['Close'].rolling(20).std()) / ma20
+            bb_width = (4 * hist['Close'].rolling(20).std()) / hist['MA20']
             
             rsv = (hist['Close'] - hist['Low'].rolling(9).min()) / (hist['High'].rolling(9).max() - hist['Low'].rolling(9).min()) * 100
             k_s = rsv.ewm(com=2).mean()
@@ -115,22 +114,59 @@ def get_stock_advanced_data(stock_dict):
             obv_high = obv.iloc[-1] >= obv.rolling(20).max().iloc[-1] * 0.95
             res_20 = hist['High'].rolling(20).max().shift(1).iloc[-1]
             
-            # ====== 黃金推薦序權重 ======
             action, prio = "🟡 盤整 0軸下 無動能", 4
-            if close < ma20.iloc[-1]: action, prio = "🛑 破線停損 (籌碼流出)", 8
+            if close < hist['MA20'].iloc[-1]: action, prio = "🛑 破線停損 (籌碼流出)", 8
             elif (k_s.iloc[-1] > k_s.iloc[-2] or osc.iloc[-1] > osc.iloc[-2]) and obv_up and obv_high and (close > res_20 or (res_20-close)/close > 0.05):
                 action, prio = "🚀 可進場，kd obv上 無壓力(或突破)", 1
-            elif close > ma20.iloc[-1] and close > ma60.iloc[-1]: action, prio = "🟢 多頭續抱", 3
+            elif close > hist['MA20'].iloc[-1] and close > hist['MA60'].iloc[-1]: action, prio = "🟢 多頭續抱", 3
 
             crown = "👑 " if symbol in LEADERS else ""
+            display_name = f"{crown}{name} ({symbol})"
             data_list.append({
                 "資料日期": hist.index[-1].strftime('%m/%d'), "代號": symbol, "所屬題材": SYMBOL_TO_THEME.get(symbol, "📌 自選股"),
-                "指標股": f"{crown}{name} ({symbol})", "漲跌幅(%)": round(change_pct, 2), "現價": round(close, 2),
-                "波段策略": action, "策略權重": prio, "黑馬潛力": "🐎 爆發準備" if (close > ma20.iloc[-1] and bb_width.iloc[-1] < 0.15 and obv_up) else "-",
+                "指標股": display_name, "漲跌幅(%)": round(change_pct, 2), "現價": round(close, 2),
+                "波段策略": action, "策略權重": prio, "黑馬潛力": "🐎 爆發準備" if (close > hist['MA20'].iloc[-1] and bb_width.iloc[-1] < 0.15 and obv_up) else "-",
                 "籌碼動能": "爆量流入" if vol_today > vol_ma5 * 1.5 else "量能平穩"
             })
+            
+            price_history_dict[display_name] = hist.tail(90) # 多抓一點天數給圖表用
         except: pass
-    return pd.DataFrame(data_list)
+    return pd.DataFrame(data_list), price_history_dict
+
+# 💡 升級版 K 線圖：加入 MACD 與 OBV
+def plot_advanced_k_volume(hist_df, name):
+    # 分成四層：K線(50%)、成交量(15%)、MACD(15%)、OBV(20%)
+    fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.5, 0.15, 0.15, 0.2])
+    
+    # 1. K線與均線
+    fig.add_trace(go.Candlestick(x=hist_df.index, open=hist_df['Open'], high=hist_df['High'], low=hist_df['Low'], close=hist_df['Close'], name='K線'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['MA5'], name='5MA', line=dict(color='#FFA500', width=1)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['MA20'], name='20MA', line=dict(color='#1E90FF', width=1.5)), row=1, col=1)
+    
+    # 2. 成交量
+    colors = ['#ff4b4b' if r['Close'] >= r['Open'] else '#00cc96' for i, r in hist_df.iterrows()]
+    fig.add_trace(go.Bar(x=hist_df.index, y=hist_df['Volume'], name='成交量', marker_color=colors), row=2, col=1)
+    
+    # 3. MACD
+    exp1 = hist_df['Close'].ewm(span=12, adjust=False).mean()
+    exp2 = hist_df['Close'].ewm(span=26, adjust=False).mean()
+    dif = exp1 - exp2
+    macd = dif.ewm(span=9, adjust=False).mean()
+    osc = dif - macd
+    osc_colors = ['#ff4b4b' if val >= 0 else '#00cc96' for val in osc]
+    fig.add_trace(go.Bar(x=hist_df.index, y=osc, name='MACD柱', marker_color=osc_colors), row=3, col=1)
+    fig.add_trace(go.Scatter(x=hist_df.index, y=dif, name='DIF', line=dict(color='#1E90FF', width=1)), row=3, col=1)
+    fig.add_trace(go.Scatter(x=hist_df.index, y=macd, name='MACD線', line=dict(color='#FFA500', width=1)), row=3, col=1)
+
+    # 4. OBV 籌碼
+    obv = (np.sign(hist_df['Close'].diff()) * hist_df['Volume']).fillna(0).cumsum()
+    obv_ma10 = obv.rolling(10).mean()
+    fig.add_trace(go.Scatter(x=hist_df.index, y=obv, name='OBV主力線', line=dict(color='#9932CC', width=2)), row=4, col=1)
+    fig.add_trace(go.Scatter(x=hist_df.index, y=obv_ma10, name='OBV均線', line=dict(color='#ccc', width=1, dash='dot')), row=4, col=1)
+
+    fig.update_layout(height=750, xaxis_rangeslider_visible=False, showlegend=False, margin=dict(t=30, b=10),
+                      title=dict(text=f"{name} 走勢與動能分析", font=dict(size=16)))
+    return fig
 
 def color_strategy(val):
     if any(x in str(val) for x in ["🚀", "💎", "🟢"]): return 'color: #ff4b4b; font-weight: bold;'
@@ -138,7 +174,7 @@ def color_strategy(val):
     return ''
 
 # ================= 5. UI 介面 =================
-st.title("台股題材動態觀測站")
+st.title("台股題材動態觀測站 V73 濾網圖表大升級")
 
 # 側邊欄 1：手動增股
 st.sidebar.header("🛠️ 新增自定義題材")
@@ -169,10 +205,9 @@ if st.sidebar.button("🔄 強制刷新資料"):
     st.cache_data.clear()
     st.rerun()
 
-# 合併清單並抓取
 all_flat = {**{sym: name for t in STOCK_DB.values() for sym, name in t.items()}, **my_holdings}
 with st.spinner("🚀 正在極速掃描技術面指標..."):
-    df_all = get_stock_advanced_data(all_flat)
+    df_all, hist_all = get_stock_advanced_data(all_flat)
 
 tab1, tab2, tab3 = st.tabs(["📊 首頁：大盤熱度", "🔍 細部題材：技術面", "🎯 波段選股 & 黑馬"])
 
@@ -193,19 +228,45 @@ with tab1:
 with tab2:
     sel_theme = st.selectbox("選擇族群", list(STOCK_DB.keys()))
     if not df_all.empty:
-        df_f = df_all[df_all['所屬題材'] == sel_theme].sort_values("策略權重")
+        df_f = df_all[df_all['所屬題材'] == sel_theme].sort_values("策略權重").drop(columns=['策略權重'])
         st.dataframe(df_f[['資料日期', '指標股', '漲跌幅(%)', '現價', '波段策略', '籌碼動能']].style.map(color_strategy, subset=['波段策略']), use_container_width=True)
+        
+        st.markdown("---")
+        target = st.selectbox("查看詳細技術線型", df_f['指標股'].tolist(), key="t2")
+        if target in hist_all: st.plotly_chart(plot_advanced_k_volume(hist_all[target], target), use_container_width=True)
 
 with tab3:
     if not df_all.empty:
         if my_holdings:
             st.markdown("### 💼 我的持股健檢")
-            st.dataframe(df_all[df_all['代號'].isin(my_holdings.keys())].sort_values("策略權重"), use_container_width=True)
+            df_my = df_all[df_all['代號'].isin(my_holdings.keys())].sort_values("策略權重").drop(columns=['策略權重'])
+            st.dataframe(df_my[['指標股', '漲跌幅(%)', '現價', '波段策略', '籌碼動能']].style.map(color_strategy, subset=['波段策略']), use_container_width=True)
         
         st.markdown("### 🐎 今日潛在爆發黑馬")
-        df_h = df_all[df_all['黑馬潛力'] != "-"].sort_values("策略權重")
+        df_h = df_all[df_all['黑馬潛力'] != "-"].sort_values("策略權重").drop(columns=['策略權重'])
         st.dataframe(df_h if not df_h.empty else pd.DataFrame(), use_container_width=True)
         
         st.markdown("---")
-        st.markdown("### 🎯 全市場波段選股總表 (黃金排序)")
-        st.dataframe(df_all.sort_values("策略權重")[['資料日期', '所屬題材', '指標股', '漲跌幅(%)', '現價', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略']), height=600, use_container_width=True)
+        
+        # 💡 V73 新增：一鍵快速篩選器
+        col_f1, col_f2 = st.columns([1, 2])
+        with col_f1:
+            st.markdown("### 🎯 全市場波段選股總表")
+        with col_f2:
+            filter_opt = st.radio("⚡ 一鍵快速篩選", ["全部顯示", "🚀 只看進場", "🟢 只看多頭", "🛑 只看停損"], horizontal=True)
+        
+        df_display = df_all.sort_values("策略權重").drop(columns=['策略權重'])
+        
+        # 執行過濾邏輯
+        if filter_opt == "🚀 只看進場":
+            df_display = df_display[df_display['波段策略'].str.contains("🚀")]
+        elif filter_opt == "🟢 只看多頭":
+            df_display = df_display[df_display['波段策略'].str.contains("🟢")]
+        elif filter_opt == "🛑 只看停損":
+            df_display = df_display[df_display['波段策略'].str.contains("🛑")]
+            
+        st.dataframe(df_display[['資料日期', '所屬題材', '指標股', '漲跌幅(%)', '現價', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略']), height=600, use_container_width=True)
+        
+        st.markdown("---")
+        target_a = st.selectbox("查看全市場詳細技術線型", df_display['指標股'].tolist(), key="t3")
+        if target_a in hist_all: st.plotly_chart(plot_advanced_k_volume(hist_all[target_a], target_a), use_container_width=True)
