@@ -74,7 +74,7 @@ def get_indices():
         except: res[name] = {"現價": 0, "漲跌幅": 0}
     return res
 
-# 💡 V81 新增：單檔全台任意股票即時抓取引擎
+# 💡 萬物單檔搜尋引擎
 @st.cache_data(ttl=300)
 def fetch_single_stock(symbol):
     try:
@@ -96,8 +96,9 @@ def fetch_single_stock(symbol):
     except:
         return None, ""
 
+# 💡 V82 核心進化：改算 20 天(月線) 機構精確 POC 算法
 @st.cache_data(ttl=600)
-def get_stock_data_v81(stock_dict):
+def get_stock_data_v82(stock_dict):
     data_list, price_history_dict = [], {}
     if not stock_dict: return pd.DataFrame(data_list), price_history_dict
 
@@ -134,8 +135,9 @@ def get_stock_data_v81(stock_dict):
             obv_high = obv.iloc[-1] >= obv.rolling(20).max().iloc[-1] * 0.95
             res_20 = hist['High'].rolling(20).max().shift(1).iloc[-1]
             
+            # 💡 V82 重大修正：精準鎖定過去 20 天(一個月) 典型價格籌碼密集點
             try:
-                hist_poc = hist.tail(60).copy()
+                hist_poc = hist.tail(20).copy()
                 min_p, max_p = hist_poc['Low'].min(), hist_poc['High'].max()
                 if min_p < max_p:
                     bins = np.linspace(min_p, max_p, 40) 
@@ -156,7 +158,7 @@ def get_stock_data_v81(stock_dict):
             data_list.append({
                 "資料日期": hist.index[-1].strftime('%m/%d'), "代號": symbol, "所屬題材": SYMBOL_TO_THEME.get(symbol, "📌 自選股"),
                 "指標股": display_name, "漲跌幅(%)": round(change_pct, 2), "現價": round(close, 2), 
-                "POC價位(季)": round(poc_price, 2),
+                "POC價位(月)": round(poc_price, 2), # 💡 更新為月週期
                 "波段策略": action, "策略權重": prio, "黑馬潛力": "🐎 爆發準備" if (close > hist['MA20'].iloc[-1] and bb_width.iloc[-1] < 0.15 and obv_up) else "-",
                 "籌碼動能": "爆量流入" if vol_today > vol_ma5 * 1.5 else "量能平穩"
             })
@@ -170,8 +172,9 @@ def plot_advanced_k_volume(hist_df, name):
     trade_dates = hist_df.index.strftime('%y/%m/%d')
     last_idx = trade_dates[-1]
 
+    # 💡 畫圖用 POC 也同步連動 20 天月週期
     try:
-        hist_poc = hist_df.tail(60).copy()
+        hist_poc = hist_df.tail(20).copy()
         min_p, max_p = hist_poc['Low'].min(), hist_poc['High'].max()
         bins = np.linspace(min_p, max_p, 40)
         typical_price = (hist_poc['High'] + hist_poc['Low'] + hist_poc['Close']) / 3
@@ -186,8 +189,7 @@ def plot_advanced_k_volume(hist_df, name):
     fig.add_hline(y=poc_price, line_dash="dash", line_color="#ff4b4b", line_width=2, row=1, col=1)
     fig.add_annotation(x=last_idx, y=hist_df['MA5'].iloc[-1], text="← 5MA短線", showarrow=False, xshift=45, font=dict(color='#FFA500', size=11), row=1, col=1)
     fig.add_annotation(x=last_idx, y=hist_df['MA20'].iloc[-1], text="← 20MA月線", showarrow=False, xshift=55, font=dict(color='#1E90FF', size=11), row=1, col=1)
-    
-    fig.add_annotation(x=trade_dates[4], y=poc_price, text=f"← POC(季) 鐵板價 ({poc_price:.1f})", showarrow=False, yshift=10, font=dict(color='#ff4b4b', size=11, family="Arial Black"), row=1, col=1)
+    fig.add_annotation(x=trade_dates[4], y=poc_price, text=f"← POC(月) 鐵板價 ({poc_price:.1f})", showarrow=False, yshift=10, font=dict(color='#ff4b4b', size=11, family="Arial Black"), row=1, col=1)
     
     colors = ['#ff4b4b' if r['Close'] >= r['Open'] else '#00cc96' for i, r in hist_df.iterrows()]
     fig.add_trace(go.Bar(x=trade_dates, y=hist_df['Volume'], name='成交量', marker_color=colors), row=2, col=1)
@@ -207,7 +209,6 @@ def plot_advanced_k_volume(hist_df, name):
     obv_ma10 = obv.rolling(10).mean()
     fig.add_trace(go.Scatter(x=trade_dates, y=obv, name='OBV主力線', line=dict(color='#9932CC', width=2.2)), row=4, col=1)
     fig.add_trace(go.Scatter(x=trade_dates, y=obv_ma10, name='OBV均線', line=dict(color='#ccc', width=1, dash='dot')), row=4, col=1)
-    
     fig.add_annotation(x=last_idx, y=obv.iloc[-1], text="← OBV主力籌碼", showarrow=False, xshift=65, font=dict(color='#9932CC', size=11, family="Arial Black"), row=4, col=1)
 
     fig.update_layout(height=780, xaxis_rangeslider_visible=False, showlegend=False, margin=dict(t=40, b=10, r=120),
@@ -221,7 +222,7 @@ def color_strategy(val):
     return ''
 
 # ================= 5. UI 介面 =================
-st.title("台股題材動態觀測站 V81 萬物搜尋雷達版")
+st.title("台股題材動態觀測站 V82 月線籌碼雷達版")
 
 # 側邊欄 1：手動增股
 st.sidebar.header("🛠️ 新增自定義題材")
@@ -253,8 +254,8 @@ if st.sidebar.button("🔄 強制刷新資料"):
     st.rerun()
 
 all_flat = {**{sym: name for t in STOCK_DB.values() for sym, name in t.items()}, **my_holdings}
-with st.spinner("🚀 正在極速掃描技術面指標與計算季 POC 鐵板價..."):
-    df_all, hist_all = get_stock_data_v81(all_flat)
+with st.spinner("🚀 正在以 20天(月線) 週期極速掃描籌碼密集區..."):
+    df_all, hist_all = get_stock_data_v82(all_flat)
 
 tab1, tab2, tab3 = st.tabs(["📊 首頁：大盤熱度", "🔍 細部題材：技術面", "🎯 波段選股 & 黑馬"])
 
@@ -276,19 +277,16 @@ with tab2:
     sel_theme = st.selectbox("選擇族群", list(STOCK_DB.keys()))
     if not df_all.empty:
         df_f = df_all[df_all['所屬題材'] == sel_theme].sort_values("策略權重").drop(columns=['策略權重'])
-        st.dataframe(df_f[['資料日期', '指標股', '漲跌幅(%)', '現價', 'POC價位(季)', '波段策略', '籌碼動能']].style.map(color_strategy, subset=['波段策略']), use_container_width=True)
+        st.dataframe(df_f[['資料日期', '指標股', '漲跌幅(%)', '現價', 'POC價位(月)', '波段策略', '籌碼動能']].style.map(color_strategy, subset=['波段策略']), use_container_width=True)
         
         st.markdown("---")
-        # 💡 圖表與搜尋並排
         st.markdown("### 🔍 個股技術線型 X 光機")
         col_t2_1, col_t2_2 = st.columns(2)
-        with col_t2_1:
-            target = st.selectbox("📋 從清單選擇", df_f['指標股'].tolist(), key="t2")
-        with col_t2_2:
-            search_t2 = st.text_input("🎯 或輸入任意代號搜尋 (如: 2330)", "", key="t2_search")
+        with col_t2_1: target = st.selectbox("📋 從清單選擇", df_f['指標股'].tolist(), key="t2")
+        with col_t2_2: search_t2 = st.text_input("🎯 或輸入任意代號搜尋 (如: 2330)", "", key="t2_search")
             
         if search_t2:
-            with st.spinner(f"正在調閱 {search_t2} 機密籌碼..."):
+            with st.spinner(f"正在調閱 {search_t2} 月線籌碼..."):
                 s_hist, s_name = fetch_single_stock(search_t2)
                 if s_hist is not None: st.plotly_chart(plot_advanced_k_volume(s_hist, s_name), use_container_width=True)
                 else: st.error(f"找不到 {search_t2}，請確認代號是否正確！")
@@ -297,17 +295,26 @@ with tab2:
 
 with tab3:
     if not df_all.empty:
+        if my_holdings:
+            st.markdown("### 💼 我的持股健檢")
+            df_my = df_all[df_all['代號'].isin(my_holdings.keys())].sort_values("策略權重").drop(columns=['策略權重'])
+            st.dataframe(df_my[['指標股', '漲跌幅(%)', '現價', 'POC價位(月)', '波段策略', '籌碼動能']].style.map(color_strategy, subset=['波段策略']), use_container_width=True)
+            
+            st.markdown("#### 🔍 我的持股線型觀測")
+            my_target = st.selectbox("選擇要分析的個人持股", df_my['指標股'].tolist(), key="my_t3_select")
+            if my_target in hist_all:
+                st.plotly_chart(plot_advanced_k_volume(hist_all[my_target], my_target), use_container_width=True, key=f"my_chart_{my_target}")
+            st.markdown("---")
+        
         st.markdown("### 🐎 今日潛在爆發黑馬")
         df_h = df_all[df_all['黑馬潛力'] != "-"].sort_values("策略權重").drop(columns=['策略權重'])
-        st.dataframe(df_h[['所屬題材', '指標股', '漲跌幅(%)', '現價', 'POC價位(季)', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略', '黑馬潛力']) if not df_h.empty else pd.DataFrame(), use_container_width=True)
+        st.dataframe(df_h[['所屬題材', '指標股', '漲跌幅(%)', '現價', 'POC價位(月)', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略', '黑馬潛力']) if not df_h.empty else pd.DataFrame(), use_container_width=True)
         
         st.markdown("---")
         
         col_f1, col_f2 = st.columns([1, 2])
-        with col_f1:
-            st.markdown("### 🎯 全市場波段選股總表")
-        with col_f2:
-            filter_opt = st.radio("⚡ 一鍵快速篩選", ["全部顯示", "🚀 只看進場", "🟢 只看多頭", "🛑 只看停損"], horizontal=True)
+        with col_f1: st.markdown("### 🎯 全市場波段選股總表")
+        with col_f2: filter_opt = st.radio("⚡ 一鍵快速篩選", ["全部顯示", "🚀 只看進場", "🟢 只看多頭", "🛑 只看停損"], horizontal=True)
         
         df_display = df_all.sort_values("策略權重").drop(columns=['策略權重'])
         
@@ -315,19 +322,17 @@ with tab3:
         elif filter_opt == "🟢 只看多頭": df_display = df_display[df_display['波段策略'].str.contains("🟢")]
         elif filter_opt == "🛑 只看停損": df_display = df_display[df_display['波段策略'].str.contains("🛑")]
             
-        st.dataframe(df_display[['資料日期', '所屬題材', '指標股', '漲跌幅(%)', '現價', 'POC價位(季)', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略']), height=600, use_container_width=True)
+        st.dataframe(df_display[['資料日期', '所屬題材', '指標股', '漲跌幅(%)', '現價', 'POC價位(月)', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略']), height=600, use_container_width=True)
         
         st.markdown("---")
-        # 💡 圖表與搜尋並排
+        # 圖表與搜尋並排
         st.markdown("### 🔍 個股技術線型 X 光機")
         col_t3_1, col_t3_2 = st.columns(2)
-        with col_t3_1:
-            target_a = st.selectbox("📋 從全市場清單選擇", df_display['指標股'].tolist(), key="t3")
-        with col_t3_2:
-            search_t3 = st.text_input("🎯 或輸入全台任意代號搜尋 (如: 2330)", "", key="t3_search")
+        with col_t3_1: target_a = st.selectbox("📋 從全市場清單選擇", df_display['指標股'].tolist(), key="t3")
+        with col_t3_2: search_t3 = st.text_input("🎯 或輸入全台任意代號搜尋 (如: 2330)", "", key="t3_search")
             
         if search_t3:
-            with st.spinner(f"正在調閱 {search_t3} 機密籌碼..."):
+            with st.spinner(f"正在調閱 {search_t3} 月線籌碼..."):
                 s_hist, s_name = fetch_single_stock(search_t3)
                 if s_hist is not None: st.plotly_chart(plot_advanced_k_volume(s_hist, s_name), use_container_width=True)
                 else: st.error(f"找不到 {search_t3}，請確認代號是否正確！")
