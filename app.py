@@ -24,7 +24,7 @@ def get_tw_stock_name(symbol):
         return title.split('(')[0].strip() if title else f"自選_{symbol}"
     except: return f"自選_{symbol}"
 
-# ================= 3. 產業題材資料庫 =================
+# ================= 3. 產業題材與 ETF 資料庫 =================
 BASE_STOCK_DB = {
     "輝達GTC/AI伺服器": {"2330": "台積電", "2317": "鴻海", "2382": "廣達", "3231": "緯創", "2376": "技嘉", "6669": "緯穎", "3706": "神達", "2356": "英業達", "2422": "佳能"},
     "散熱管理/水冷": {"3017": "奇鋐", "3324": "雙鴻", "2421": "建準", "6230": "超眾", "8996": "高力", "3483": "力致", "3338": "泰碩", "3653": "健策"},
@@ -42,10 +42,41 @@ BASE_STOCK_DB = {
     "AI機器人/自動化": {"2359": "所羅門", "2365": "昆盈", "6414": "樺漢", "8374": "羅昇", "4510": "高鋒", "1590": "亞德客-KY", "2049": "上銀", "4545": "銘鈺"},
     "AI PC/工業電腦": {"2357": "華碩", "2353": "宏碁", "2395": "研華", "6245": "立端", "8114": "振樺電", "6206": "飛捷"}
 }
-
 STOCK_DB = {**BASE_STOCK_DB, **st.session_state['custom_themes']}
 SYMBOL_TO_THEME = {sym: theme for theme, stocks in STOCK_DB.items() for sym in stocks}
 LEADERS = ["2330", "2317", "3450", "4979", "3037", "2383", "3017", "2308", "2327", "2454", "3661", "1519", "2603"]
+
+# 💡 V84 新增：內建 ETF 成分股資料庫
+ETF_DB = {
+    "0050 (元大台灣50)": {
+        "2330": {"name": "台積電", "weight": 52.5, "theme": "半導體"}, "2317": {"name": "鴻海", "weight": 8.2, "theme": "AI伺服器"},
+        "2454": {"name": "聯發科", "weight": 4.5, "theme": "IC設計"}, "2382": {"name": "廣達", "weight": 2.5, "theme": "AI伺服器"},
+        "2308": {"name": "台達電", "weight": 2.2, "theme": "電源與BBU"}, "2303": {"name": "聯電", "weight": 1.8, "theme": "半導體"},
+        "2881": {"name": "富邦金", "weight": 1.5, "theme": "金融"}, "2882": {"name": "國泰金", "weight": 1.4, "theme": "金融"},
+        "3711": {"name": "日月光", "weight": 1.3, "theme": "封測"}, "2891": {"name": "中信金", "weight": 1.2, "theme": "金融"}
+    },
+    "0056 (元大高股息)": {
+        "3034": {"name": "聯詠", "weight": 4.2, "theme": "IC設計"}, "2603": {"name": "長榮", "weight": 4.1, "theme": "航運"},
+        "2454": {"name": "聯發科", "weight": 3.8, "theme": "IC設計"}, "3044": {"name": "健鼎", "weight": 3.5, "theme": "PCB"},
+        "2345": {"name": "智邦", "weight": 3.2, "theme": "網通"}, "2379": {"name": "瑞昱", "weight": 3.0, "theme": "IC設計"},
+        "3008": {"name": "大立光", "weight": 2.8, "theme": "光學"}, "2317": {"name": "鴻海", "weight": 2.5, "theme": "AI伺服器"},
+        "2330": {"name": "台積電", "weight": 2.0, "theme": "半導體"}, "3231": {"name": "緯創", "weight": 1.8, "theme": "AI PC"}
+    },
+    "00878 (國泰永續高股息)": {
+        "2454": {"name": "聯發科", "weight": 4.5, "theme": "IC設計"}, "3034": {"name": "聯詠", "weight": 4.2, "theme": "IC設計"},
+        "2474": {"name": "可成", "weight": 3.8, "theme": "機殼"}, "2357": {"name": "華碩", "weight": 3.6, "theme": "AI PC"},
+        "2382": {"name": "廣達", "weight": 3.5, "theme": "AI伺服器"}, "2377": {"name": "微星", "weight": 3.2, "theme": "AI PC"},
+        "2376": {"name": "技嘉", "weight": 3.0, "theme": "AI伺服器"}, "2324": {"name": "仁寶", "weight": 2.8, "theme": "AI PC"},
+        "3702": {"name": "大聯大", "weight": 2.5, "theme": "通路"}, "4904": {"name": "遠傳", "weight": 2.2, "theme": "電信"}
+    },
+    "00919 (群益台灣精選高息)": {
+        "2603": {"name": "長榮", "weight": 11.2, "theme": "航運"}, "2303": {"name": "聯電", "weight": 6.5, "theme": "半導體"},
+        "3034": {"name": "聯詠", "weight": 6.2, "theme": "IC設計"}, "2454": {"name": "聯發科", "weight": 5.8, "theme": "IC設計"},
+        "2891": {"name": "中信金", "weight": 4.8, "theme": "金融"}, "6121": {"name": "新普", "weight": 4.2, "theme": "電源與BBU"},
+        "3293": {"name": "鈊象", "weight": 3.8, "theme": "遊戲"}, "6239": {"name": "力成", "weight": 3.5, "theme": "封測"},
+        "2404": {"name": "漢唐", "weight": 3.2, "theme": "無塵室"}, "8112": {"name": "至上", "weight": 3.0, "theme": "通路"}
+    }
+}
 
 # ================= 4. 核心抓取 =================
 @st.cache_data(ttl=1800)
@@ -90,13 +121,11 @@ def fetch_single_stock(symbol):
         
         hist['MA5'] = hist['Close'].rolling(5).mean()
         hist['MA20'] = hist['Close'].rolling(20).mean()
-        
         return hist, display_name
-    except:
-        return None, ""
+    except: return None, ""
 
 @st.cache_data(ttl=600)
-def get_stock_data_v83(stock_dict):
+def get_stock_data_v84(stock_dict):
     data_list, price_history_dict = [], {}
     if not stock_dict: return pd.DataFrame(data_list), price_history_dict
 
@@ -217,8 +246,14 @@ def color_strategy(val):
     if any(x in str(val) for x in ["🛑", "⚠️", "🔥"]): return 'color: #00cc96; font-weight: bold;'
     return ''
 
+# 💡 V84 新增：重疊標記顏色邏輯
+def highlight_overlap(val):
+    if val == "🔥 重疊":
+        return 'color: #ff4b4b; font-weight: bold; background-color: #ffe6e6;'
+    return ''
+
 # ================= 5. UI 介面 =================
-st.title("台股題材動態觀測站 V83 身份獨立防撞版")
+st.title("台股題材動態觀測站 V84 ETF戰情室版")
 
 # 側邊欄 1：手動增股
 st.sidebar.header("🛠️ 新增自定義題材")
@@ -251,9 +286,10 @@ if st.sidebar.button("🔄 強制刷新資料"):
 
 all_flat = {**{sym: name for t in STOCK_DB.values() for sym, name in t.items()}, **my_holdings}
 with st.spinner("🚀 正在以 20天(月線) 週期極速掃描籌碼密集區..."):
-    df_all, hist_all = get_stock_data_v83(all_flat)
+    df_all, hist_all = get_stock_data_v84(all_flat)
 
-tab1, tab2, tab3 = st.tabs(["📊 首頁：大盤熱度", "🔍 細部題材：技術面", "🎯 波段選股 & 黑馬"])
+# 💡 V84 新增：第四個分頁
+tab1, tab2, tab3, tab4 = st.tabs(["📊 首頁：大盤熱度", "🔍 細部題材：技術面", "🎯 波段選股 & 黑馬", "🛡️ ETF 籌碼戰情室"])
 
 with tab1:
     idx_data = get_indices()
@@ -284,11 +320,9 @@ with tab2:
         if search_t2:
             with st.spinner(f"正在調閱 {search_t2} 月線籌碼..."):
                 s_hist, s_name = fetch_single_stock(search_t2)
-                # 💡 加上唯一身分證 key 
                 if s_hist is not None: st.plotly_chart(plot_advanced_k_volume(s_hist, s_name), use_container_width=True, key=f"tab2_search_{search_t2}")
                 else: st.error(f"找不到 {search_t2}，請確認代號是否正確！")
         else:
-            # 💡 加上唯一身分證 key 
             if target in hist_all: st.plotly_chart(plot_advanced_k_volume(hist_all[target], target), use_container_width=True, key=f"tab2_list_{target}")
 
 with tab3:
@@ -331,9 +365,62 @@ with tab3:
         if search_t3:
             with st.spinner(f"正在調閱 {search_t3} 月線籌碼..."):
                 s_hist, s_name = fetch_single_stock(search_t3)
-                # 💡 加上唯一身分證 key 
                 if s_hist is not None: st.plotly_chart(plot_advanced_k_volume(s_hist, s_name), use_container_width=True, key=f"tab3_search_{search_t3}")
                 else: st.error(f"找不到 {search_t3}，請確認代號是否正確！")
         else:
-            # 💡 加上唯一身分證 key 
             if target_a in hist_all: st.plotly_chart(plot_advanced_k_volume(hist_all[target_a], target_a), use_container_width=True, key=f"tab3_list_{target_a}")
+
+# 💡 V84 新增：ETF 戰情室專區
+with tab4:
+    st.markdown("### ⚔️ ETF 籌碼對決戰情室 (前十大持股)")
+    st.write("精選台股最具代表性的四大 ETF 進行持股對決，一秒看穿籌碼重疊度，避免資產假分散！")
+    
+    etf_list = list(ETF_DB.keys())
+    
+    # 頂部選擇區 (Apple 並排風格)
+    col_e1, col_e2 = st.columns(2)
+    with col_e1: 
+        etf1 = st.selectbox("選擇第一檔 (紅方)", etf_list, index=1) # 預設 0056
+    with col_e2: 
+        etf2 = st.selectbox("選擇第二檔 (藍方)", etf_list, index=2) # 預設 00878
+        
+    if etf1 and etf2:
+        holdings1 = ETF_DB[etf1]
+        holdings2 = ETF_DB[etf2]
+        
+        # 運算核心：計算交集與重疊分數
+        common_stocks = set(holdings1.keys()).intersection(set(holdings2.keys()))
+        overlap_score = 0
+        for sym in common_stocks:
+            overlap_score += min(holdings1[sym]['weight'], holdings2[sym]['weight'])
+            
+        st.markdown("---")
+        st.markdown(f"#### 📊 前十大持股重疊度：**{overlap_score:.1f}%**")
+        st.progress(overlap_score / 100.0)
+        
+        # 建立對照 DataFrame
+        def build_etf_df(holdings, common):
+            data = []
+            for sym, info in holdings.items():
+                marker = "🔥 重疊" if sym in common else ""
+                data.append({
+                    "代號": sym, 
+                    "名稱": info['name'], 
+                    "題材": info['theme'], 
+                    "權重(%)": info['weight'], 
+                    "狀態": marker
+                })
+            return pd.DataFrame(data).sort_values("權重(%)", ascending=False).reset_index(drop=True)
+
+        df_etf1 = build_etf_df(holdings1, common_stocks)
+        df_etf2 = build_etf_df(holdings2, common_stocks)
+        
+        # 下方矩陣對照區
+        col_m1, col_m2 = st.columns(2)
+        with col_m1:
+            st.markdown(f"##### 🥊 {etf1}")
+            st.dataframe(df_etf1.style.map(highlight_overlap, subset=['狀態']), use_container_width=True, hide_index=True)
+            
+        with col_m2:
+            st.markdown(f"##### 🥊 {etf2}")
+            st.dataframe(df_etf2.style.map(highlight_overlap, subset=['狀態']), use_container_width=True, hide_index=True)
