@@ -332,7 +332,7 @@ def parse_etf_pdf_in_memory(pdf_url):
 
 
 # ================= 5. UI 介面 =================
-st.title("台股題材動態觀測站 V87 究極完全體版")
+st.title("台股題材動態觀測站")
 
 # 側邊欄 1：手動增股
 st.sidebar.header("🛠️ 新增自定義題材")
