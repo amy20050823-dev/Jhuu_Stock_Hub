@@ -10,7 +10,7 @@ import io
 import pdfplumber
 
 # ================= 1. 網頁配置 =================
-st.set_page_config(page_title="台股題材動態觀測站", layout="wide")
+st.set_page_config(page_title="台股題材觀測", layout="wide")
 
 if 'custom_themes' not in st.session_state:
     st.session_state['custom_themes'] = {}
