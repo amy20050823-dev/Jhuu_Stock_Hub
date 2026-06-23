@@ -6,13 +6,12 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import requests
 from bs4 import BeautifulSoup
+import time
 
-# ================= 0. 突破封鎖的面具設定 =================
-# 建立一個具有真實瀏覽器特徵的連線 Session，防止被 Yahoo 和 Google 阻擋
+# ================= 0. 突破封鎖的連線設定 =================
 safe_session = requests.Session()
 safe_session.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 })
 
 # ================= 1. 網頁與 CSS 配置 =================
@@ -20,53 +19,32 @@ st.set_page_config(page_title="台股動態觀測站", layout="wide")
 
 st.markdown("""
 <style>
-    .summary-card {
-        background-color: #f8f9fa;
-        border-radius: 15px;
-        padding: 20px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-        margin-bottom: 20px;
-    }
-    .metric-card {
-        background-color: #ffffff;
-        border-radius: 12px;
-        padding: 15px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        text-align: center;
-        border: 1px solid #edf2f7;
-    }
-    .tag-pill {
-        background-color: #e2e8f0;
-        color: #4a5568;
-        padding: 5px 12px;
-        border-radius: 20px;
-        font-size: 14px;
-        margin-right: 8px;
-        display: inline-block;
-    }
-    .grid-btn {
-        background-color: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 12px;
-        padding: 15px;
-        text-align: center;
-        font-weight: bold;
-        color: #2d3748;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
-    }
+    .summary-card { background-color: #f8f9fa; border-radius: 15px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; }
+    .metric-card { background-color: #ffffff; border-radius: 12px; padding: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); text-align: center; border: 1px solid #edf2f7; }
+    .tag-pill { background-color: #e2e8f0; color: #4a5568; padding: 5px 12px; border-radius: 20px; font-size: 14px; margin-right: 8px; display: inline-block; }
+    .grid-btn { background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 15px; text-align: center; font-weight: bold; color: #2d3748; box-shadow: 0 2px 4px rgba(0,0,0,0.02); }
 </style>
 """, unsafe_allow_html=True)
 
 if 'custom_themes' not in st.session_state:
     st.session_state['custom_themes'] = {}
 
-# ================= 2. 核心資料庫 =================
+# ================= 2. 核心資料庫 (完整 16 大族群回歸) =================
 BASE_STOCK_DB = {
-    "AI伺服器": {"2330": "台積電", "2317": "鴻海", "2382": "廣達", "3231": "緯創", "2376": "技嘉", "6669": "緯穎"},
-    "散熱管理": {"3017": "奇鋐", "3324": "雙鴻", "2421": "建準", "8996": "高力", "3483": "力致", "3653": "健策"},
-    "電源與BBU": {"2308": "台達電", "2301": "光寶科", "6409": "旭隼", "6121": "新普", "6781": "AES-KY"},
+    "AI伺服器": {"2330": "台積電", "2317": "鴻海", "2382": "廣達", "3231": "緯創", "2376": "技嘉", "6669": "緯穎", "3706": "神達", "2356": "英業達"},
+    "散熱與水冷": {"3017": "奇鋐", "3324": "雙鴻", "2421": "建準", "8996": "高力", "3483": "力致", "3653": "健策"},
+    "電源與BBU": {"2308": "台達電", "2301": "光寶科", "6409": "旭隼", "6121": "新普", "6781": "AES-KY", "3211": "順達"},
     "CoWoS封裝": {"3131": "弘塑", "6187": "萬潤", "5443": "均豪", "6640": "均華", "3583": "辛耘", "6515": "穎崴"},
     "矽光子CPO": {"4979": "華星光", "3450": "聯鈞", "3081": "聯亞", "3363": "上詮", "6442": "光聖", "3163": "波若威"},
+    "特化與光阻": {"4770": "上品", "1773": "勝一", "4755": "三福化", "1727": "中華化", "4763": "材料-KY"},
+    "面板級封測": {"3711": "日月光投控", "2449": "京元電子", "6257": "矽格", "3481": "群創", "8064": "東捷"},
+    "廠務與無塵室": {"2404": "漢唐", "3402": "漢科", "6139": "亞翔", "5536": "聖暉*"},
+    "IP矽智財": {"3443": "智原", "3661": "世芯-KY", "6643": "M31", "6533": "晶心科", "3529": "力旺"},
+    "ABF載板": {"3037": "欣興", "8046": "南電", "3189": "景碩"},
+    "網通與光通訊": {"3596": "智易", "5388": "中磊", "3380": "明泰", "6285": "啟碁"},
+    "低軌衛星": {"2313": "華通", "3491": "昇達科", "6271": "同欣電", "2485": "兆赫"},
+    "機器人與自動化": {"2359": "所羅門", "2365": "昆盈", "6414": "樺漢", "8374": "羅昇", "2049": "上銀"},
+    "AI PC": {"2357": "華碩", "2353": "宏碁", "2395": "研華", "8114": "振樺電"},
     "功率元件": {"8255": "朋程", "3645": "達邁", "5425": "台半", "8261": "富鼎", "3317": "尼克森"} 
 }
 STOCK_DB = {**BASE_STOCK_DB, **st.session_state['custom_themes']}
@@ -86,7 +64,6 @@ def get_tw_stock_name(symbol):
 @st.cache_data(ttl=1800)
 def get_market_summary_and_tags():
     try:
-        # 加長 timeout 並使用偽裝 Session
         url_tw = "https://news.google.com/rss/search?q=台股+OR+半導體+OR+外資&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
         res = safe_session.get(url_tw, timeout=8)
         soup = BeautifulSoup(res.text, 'xml')
@@ -102,16 +79,15 @@ def get_market_summary_and_tags():
             summary_text = "目前市場無重大突發消息，呈現量縮整理格局。"
             tags = ["平穩", "量縮"]
         return summary_text, tags
-    except Exception as e:
-        return f"新聞擷取保護啟動，暫無最新摘要。", ["防護中"]
+    except:
+        return "新聞擷取保護啟動，暫無最新摘要 (受限於 Google RSS 防護)。", ["防護中"]
 
 @st.cache_data(ttl=600)
 def get_indices():
-    indices_dict = {"加權指數": "^TWII", "櫃買指數": "^TWO", "費城半導體": "^SOX"}
+    indices_dict = {"加權指數": "^TWII", "台積電 ADR": "TSM", "費城半導體": "^SOX"}
     res = {}
     for name, symbol in indices_dict.items():
         try:
-            # 傳入 session 避免被擋
             hist = yf.Ticker(symbol, session=safe_session).history(period="5d")
             if len(hist) >= 2:
                 close, prev = float(hist['Close'].iloc[-1]), float(hist['Close'].iloc[-2])
@@ -137,28 +113,54 @@ def fetch_single_stock(symbol):
     except: return None, ""
 
 @st.cache_data(ttl=600)
-def get_stock_data_v92(stock_dict):
+def get_stock_data_v93(stock_dict):
     data_list, price_history_dict = [], {}
     if not stock_dict: return pd.DataFrame(data_list), price_history_dict
 
     tickers = [f"{s}.TW" for s in stock_dict.keys()] + [f"{s}.TWO" for s in stock_dict.keys()]
-    try:
-        # 💡 最重要的一步：將偽裝面具 session 傳給大批次下載引擎！
-        batch = yf.download(tickers, period="6mo", group_by="ticker", progress=False, threads=True, session=safe_session)
-    except: return pd.DataFrame(), {}
+    
+    # 💡 破解 Yahoo 封鎖的終極解法：取消多執行緒 (threads=False) 並分批下載
+    batch_data = {}
+    chunk_size = 20
+    for i in range(0, len(tickers), chunk_size):
+        chunk = tickers[i:i + chunk_size]
+        try:
+            temp_batch = yf.download(chunk, period="6mo", group_by="ticker", progress=False, threads=False, session=safe_session)
+            if isinstance(temp_batch.columns, pd.MultiIndex):
+                for t in chunk:
+                    if t in temp_batch.columns.get_level_values(0):
+                        batch_data[t] = temp_batch[t]
+            else:
+                batch_data[chunk[0]] = temp_batch
+        except: pass
+        time.sleep(0.5) # 暫停半秒，徹底防止被當成機器人
 
     for symbol, name in stock_dict.items():
         try:
             hist = pd.DataFrame()
             for suffix in [".TW", ".TWO"]:
                 tkr = f"{symbol}{suffix}"
-                if tkr in batch.columns.get_level_values(0):
-                    hist = batch[tkr].copy().dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low'])
+                if tkr in batch_data:
+                    hist = batch_data[tkr].copy().dropna(subset=['Close', 'Volume', 'Open', 'High', 'Low'])
                     if not hist.empty: break
             if hist.empty: continue
             
             close, prev_close = float(hist['Close'].iloc[-1]), float(hist['Close'].iloc[-2])
+            open_p, high_p, low_p = float(hist['Open'].iloc[-1]), float(hist['High'].iloc[-1]), float(hist['Low'].iloc[-1])
             change_pct = ((close - prev_close) / prev_close) * 100
+            
+            # 💡 新增：上下影線與 K線型態判定
+            upper_shadow = high_p - max(open_p, close_p)
+            lower_shadow = min(open_p, close_p) - low_p
+            body = abs(open_p - close_p)
+            
+            k_pattern = "-"
+            if lower_shadow > body * 1.5 and lower_shadow > upper_shadow:
+                k_pattern = "📌 長下影 (探底支撐)"
+            elif upper_shadow > body * 1.5 and upper_shadow > lower_shadow:
+                k_pattern = "⚠️ 長上影 (遇壓回檔)"
+            elif close_p > open_p and body > (high_p - low_p) * 0.7:
+                k_pattern = "📈 實體紅K (多方控盤)"
             
             hist['MA5'], hist['MA20'], hist['MA60'] = hist['Close'].rolling(5).mean(), hist['Close'].rolling(20).mean(), hist['Close'].rolling(60).mean()
             vol_today, vol_ma5 = float(hist['Volume'].iloc[-1]), hist['Volume'].rolling(5).mean().iloc[-1]
@@ -196,8 +198,9 @@ def get_stock_data_v92(stock_dict):
             data_list.append({
                 "代號": symbol, "所屬題材": SYMBOL_TO_THEME.get(symbol, "📌 自選股"),
                 "指標股": display_name, "漲跌幅(%)": round(change_pct, 2), "現價": round(close, 2), 
-                "POC鐵板價": round(poc_price, 2), "波段策略": action, "黑馬潛力": is_dark_horse,
-                "籌碼動能": "🔥 爆量流入" if vol_today > vol_ma5 * 1.5 else "-"
+                "K線型態": k_pattern, "POC鐵板價": round(poc_price, 2), 
+                "波段策略": action, "黑馬潛力": is_dark_horse,
+                "籌碼動能": "🔥 爆量" if vol_today > vol_ma5 * 1.5 else "-"
             })
             price_history_dict[display_name] = hist.tail(90)
         except: pass
@@ -233,19 +236,18 @@ def plot_advanced_k_volume(hist_df, name):
     return fig
 
 def color_strategy(val):
-    if any(x in str(val) for x in ["🚀", "🟢", "🐎"]): return 'color: #ff4b4b; font-weight: bold;'
-    if "🛑" in str(val): return 'color: #00cc96; font-weight: bold;'
+    if any(x in str(val) for x in ["🚀", "🟢", "🐎", "📌"]): return 'color: #ff4b4b; font-weight: bold;'
+    if any(x in str(val) for x in ["🛑", "⚠️"]): return 'color: #00cc96; font-weight: bold;'
     return ''
 
 # ================= 4. UI 版面配置 =================
 st.title("概覽")
 
-with st.spinner("🚀 系統載入與核心運算中..."):
-    # 攤平字典交給大引擎處理
+with st.spinner("🚀 系統載入與核心運算中 (為了防止阻擋，載入約需 5-10 秒)..."):
     flat_stock_dict = {sym: name for theme_dict in STOCK_DB.values() for sym, name in theme_dict.items()}
-    df_all, hist_all = get_stock_data_v92(flat_stock_dict)
+    df_all, hist_all = get_stock_data_v93(flat_stock_dict)
 
-# --- 區塊 1：AI 市場摘要卡片 ---
+# --- 區塊 1：AI 市場摘要 ---
 summary_text, tags = get_market_summary_and_tags()
 st.markdown(f"""
 <div class="summary-card">
@@ -254,22 +256,11 @@ st.markdown(f"""
         <span style="color: #718096; font-size: 12px;">盤後整理</span>
     </div>
     <h4 style="margin-top: 0; color: #1a202c; font-size: 16px; line-height: 1.5;">{summary_text}</h4>
-    <div style="margin-top: 15px;">
-        {''.join([f'<span class="tag-pill">#{t}</span>' for t in tags])}
-    </div>
+    <div style="margin-top: 15px;">{''.join([f'<span class="tag-pill">#{t}</span>' for t in tags])}</div>
 </div>
 """, unsafe_allow_html=True)
 
-# --- 區塊 2：四大按鈕列 ---
-st.markdown("##### 快速導覽")
-col_b1, col_b2, col_b3, col_b4 = st.columns(4)
-col_b1.markdown('<div class="grid-btn">🔥 族群熱力</div>', unsafe_allow_html=True)
-col_b2.markdown('<div class="grid-btn">📈 均線選股</div>', unsafe_allow_html=True)
-col_b3.markdown('<div class="grid-btn">🎯 籌碼突破</div>', unsafe_allow_html=True)
-col_b4.markdown('<div class="grid-btn">💼 庫存健檢</div>', unsafe_allow_html=True)
-st.write("")
-
-# --- 區塊 3：三大指數區 ---
+# --- 區塊 2：三大指數區 ---
 st.markdown("##### 大盤動態")
 idx_data = get_indices()
 col_i1, col_i2, col_i3 = st.columns(3)
@@ -287,28 +278,27 @@ for i, (n, d) in enumerate(idx_data.items()):
 
 st.markdown("---")
 
-# --- 區塊 4：核心工具區 ---
-tab_group, tab_scan, tab_chart = st.tabs(["🔥 族群熱力圖", "📈 技術面選股", "🔍 線型 X光機"])
+# --- 區塊 3：核心工具區 ---
+# 💡 改回妳習慣的分頁：族群熱力、波段起漲、潛在黑馬、線型X光機
+tab_group, tab_trend, tab_darkhorse, tab_chart = st.tabs(["🔥 族群熱力圖", "🚀 波段起漲股", "🐎 潛在黑馬股", "🔍 線型 X光機"])
 
 with tab_group:
     if not df_all.empty:
         st.write("各族群平均漲跌幅 (觀察資金流向)")
         group_df = df_all.groupby('所屬題材')['漲跌幅(%)'].mean().reset_index().sort_values("漲跌幅(%)", ascending=False)
-        # 💡 新版寫法：解決 use_container_width 的過期警告
         st.dataframe(group_df, width="stretch", hide_index=True)
 
-with tab_scan:
+with tab_trend:
     if not df_all.empty:
-        filter_opt = st.radio("篩選條件", ["全部顯示", "🚀 僅顯示波段起漲", "🐎 僅顯示潛在黑馬"], horizontal=True)
-        df_display = df_all.copy()
-        
-        if filter_opt == "🚀 僅顯示波段起漲": 
-            df_display = df_display[df_display['波段策略'].str.contains("🚀")]
-        elif filter_opt == "🐎 僅顯示潛在黑馬":
-            df_display = df_display[df_display['黑馬潛力'].str.contains("🐎")]
-            
-        # 💡 新版寫法：解決 use_container_width 的過期警告
-        st.dataframe(df_display[['所屬題材', '指標股', '漲跌幅(%)', '現價', 'POC鐵板價', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略', '黑馬潛力']), width="stretch", hide_index=True)
+        st.write("技術面呈多頭排列，且籌碼與動能指標轉強之標的。")
+        df_trend = df_all[df_all['波段策略'].str.contains("🚀|🟢")]
+        st.dataframe(df_trend[['所屬題材', '指標股', '漲跌幅(%)', '現價', 'K線型態', 'POC鐵板價', '波段策略', '籌碼動能']].style.map(color_strategy, subset=['波段策略', 'K線型態']), width="stretch", hide_index=True)
+
+with tab_darkhorse:
+    if not df_all.empty:
+        st.write("布林通道極度壓縮，且 OBV 主力籌碼暗中吃貨之打底標的。")
+        df_darkhorse = df_all[df_all['黑馬潛力'].str.contains("🐎")]
+        st.dataframe(df_darkhorse[['所屬題材', '指標股', '漲跌幅(%)', '現價', 'K線型態', 'POC鐵板價', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['黑馬潛力', 'K線型態']), width="stretch", hide_index=True)
 
 with tab_chart:
     st.write("輸入代號，調閱完整技術指標與量能 (含 K線、成交量、MACD、OBV)")
