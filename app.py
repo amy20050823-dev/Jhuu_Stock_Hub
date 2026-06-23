@@ -10,7 +10,6 @@ from bs4 import BeautifulSoup
 # ================= 1. 網頁與 CSS 配置 =================
 st.set_page_config(page_title="台股動態觀測站", layout="wide")
 
-# 注入 CSS 魔法：打造 App 卡片風格
 st.markdown("""
 <style>
     .summary-card {
@@ -79,7 +78,6 @@ def get_tw_stock_name(symbol):
 # ================= 3. 資料抓取引擎 =================
 @st.cache_data(ttl=1800)
 def get_market_summary_and_tags():
-    """抓取新聞，產生無連結的摘要與熱門標籤"""
     try:
         url_tw = "https://news.google.com/rss/search?q=台股+OR+半導體+OR+外資&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
         res = requests.get(url_tw, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
@@ -101,7 +99,8 @@ def get_market_summary_and_tags():
 
 @st.cache_data(ttl=600)
 def get_indices():
-    indices_dict = {"加權指數": "^TWII", "櫃買指數": "^TWO", "費城半導體": "^SOX"}
+    # 💡 修正：移除常出錯的櫃買指數，換成對台股影響最大的台積電ADR
+    indices_dict = {"加權指數": "^TWII", "台積電 ADR": "TSM", "費城半導體": "^SOX"}
     res = {}
     for name, symbol in indices_dict.items():
         try:
@@ -130,7 +129,7 @@ def fetch_single_stock(symbol):
     except: return None, ""
 
 @st.cache_data(ttl=600)
-def get_stock_data_v90(stock_dict):
+def get_stock_data_v91(stock_dict):
     data_list, price_history_dict = [], {}
     if not stock_dict: return pd.DataFrame(data_list), price_history_dict
 
@@ -152,24 +151,20 @@ def get_stock_data_v90(stock_dict):
             close, prev_close = float(hist['Close'].iloc[-1]), float(hist['Close'].iloc[-2])
             change_pct = ((close - prev_close) / prev_close) * 100
             
-            # 計算均線與指標
             hist['MA5'], hist['MA20'], hist['MA60'] = hist['Close'].rolling(5).mean(), hist['Close'].rolling(20).mean(), hist['Close'].rolling(60).mean()
             vol_today, vol_ma5 = float(hist['Volume'].iloc[-1]), hist['Volume'].rolling(5).mean().iloc[-1]
             bb_width = (4 * hist['Close'].rolling(20).std()) / hist['MA20']
             
-            # KD 與 MACD
             rsv = (hist['Close'] - hist['Low'].rolling(9).min()) / (hist['High'].rolling(9).max() - hist['Low'].rolling(9).min()) * 100
             k_s = rsv.ewm(com=2).mean()
             dif = hist['Close'].ewm(span=12).mean() - hist['Close'].ewm(span=26).mean()
             osc = dif - dif.ewm(span=9).mean()
             
-            # OBV 籌碼
             obv = (np.sign(hist['Close'].diff()) * hist['Volume']).fillna(0).cumsum()
             obv_up = obv.iloc[-1] > obv.rolling(10).mean().iloc[-1]
             obv_high = obv.iloc[-1] >= obv.rolling(20).max().iloc[-1] * 0.95
             res_20 = hist['High'].rolling(20).max().shift(1).iloc[-1]
             
-            # POC 鐵板價
             try:
                 hist_poc = hist.tail(20).copy()
                 bins = np.linspace(hist_poc['Low'].min(), hist_poc['High'].max(), 40)
@@ -177,7 +172,6 @@ def get_stock_data_v90(stock_dict):
                 poc_price = hist_poc.groupby('Price_Bin')['Volume'].sum().idxmax().mid
             except: poc_price = close
 
-            # 嚴格選股邏輯判定
             action = "🟡 盤整觀望"
             if close < hist['MA20'].iloc[-1]: 
                 action = "🛑 破線防守"
@@ -204,16 +198,13 @@ def plot_advanced_k_volume(hist_df, name):
     fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.5, 0.15, 0.15, 0.2])
     trade_dates = hist_df.index.strftime('%y/%m/%d')
     
-    # 畫K線與均線
     fig.add_trace(go.Candlestick(x=trade_dates, open=hist_df['Open'], high=hist_df['High'], low=hist_df['Low'], close=hist_df['Close'], name='K線'), row=1, col=1)
     fig.add_trace(go.Scatter(x=trade_dates, y=hist_df['MA5'], name='5MA', line=dict(color='#FFA500', width=1.5)), row=1, col=1)
     fig.add_trace(go.Scatter(x=trade_dates, y=hist_df['MA20'], name='20MA', line=dict(color='#1E90FF', width=1.8)), row=1, col=1)
     
-    # 畫成交量
     colors = ['#ff4b4b' if r['Close'] >= r['Open'] else '#00cc96' for i, r in hist_df.iterrows()]
     fig.add_trace(go.Bar(x=trade_dates, y=hist_df['Volume'], name='成交量', marker_color=colors), row=2, col=1)
     
-    # 畫 MACD
     exp1 = hist_df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = hist_df['Close'].ewm(span=26, adjust=False).mean()
     dif = exp1 - exp2
@@ -223,7 +214,6 @@ def plot_advanced_k_volume(hist_df, name):
     fig.add_trace(go.Bar(x=trade_dates, y=osc, name='MACD柱', marker_color=osc_colors), row=3, col=1)
     fig.add_trace(go.Scatter(x=trade_dates, y=dif, name='DIF', line=dict(color='#1E90FF', width=1.2)), row=3, col=1)
     
-    # 畫 OBV
     obv = (np.sign(hist_df['Close'].diff()) * hist_df['Volume']).fillna(0).cumsum()
     obv_ma10 = obv.rolling(10).mean()
     fig.add_trace(go.Scatter(x=trade_dates, y=obv, name='OBV主力線', line=dict(color='#9932CC', width=2.2)), row=4, col=1)
@@ -242,7 +232,9 @@ def color_strategy(val):
 st.title("概覽")
 
 with st.spinner("🚀 系統載入與核心運算中..."):
-    df_all, hist_all = get_stock_data_v90(STOCK_DB)
+    # 💡 V91 修復：在這裡把巢狀字典強制攤平為單層字典！
+    flat_stock_dict = {sym: name for theme_dict in STOCK_DB.values() for sym, name in theme_dict.items()}
+    df_all, hist_all = get_stock_data_v91(flat_stock_dict)
 
 # --- 區塊 1：AI 市場摘要卡片 ---
 summary_text, tags = get_market_summary_and_tags()
