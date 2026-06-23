@@ -7,6 +7,14 @@ from plotly.subplots import make_subplots
 import requests
 from bs4 import BeautifulSoup
 
+# ================= 0. 突破封鎖的面具設定 =================
+# 建立一個具有真實瀏覽器特徵的連線 Session，防止被 Yahoo 和 Google 阻擋
+safe_session = requests.Session()
+safe_session.headers.update({
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+})
+
 # ================= 1. 網頁與 CSS 配置 =================
 st.set_page_config(page_title="台股動態觀測站", layout="wide")
 
@@ -68,8 +76,7 @@ LEADERS = ["2330", "2317", "3450", "4979", "3037", "2383", "3017", "2308", "2327
 def get_tw_stock_name(symbol):
     try:
         url = f"https://tw.stock.yahoo.com/quote/{symbol}"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        res = requests.get(url, headers=headers, timeout=3)
+        res = safe_session.get(url, timeout=3)
         soup = BeautifulSoup(res.text, 'html.parser')
         title = soup.find('title').text
         return title.split('(')[0].strip() if title else f"自選_{symbol}"
@@ -79,32 +86,33 @@ def get_tw_stock_name(symbol):
 @st.cache_data(ttl=1800)
 def get_market_summary_and_tags():
     try:
+        # 加長 timeout 並使用偽裝 Session
         url_tw = "https://news.google.com/rss/search?q=台股+OR+半導體+OR+外資&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
-        res = requests.get(url_tw, headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+        res = safe_session.get(url_tw, timeout=8)
         soup = BeautifulSoup(res.text, 'xml')
         titles = [item.title.text.split(' - ')[0] for item in soup.find_all('item')[:8]]
         
         if titles:
             summary_text = "今日盤面焦點： " + "；".join(titles[:3]) + "。市場資金輪動快速，建議留意籌碼面變化與均線支撐。"
+            all_text = "".join(titles)
+            keywords = ["台積電", "AI", "外資", "散熱", "鴻海", "聯發科", "降息", "ETF", "營收", "法說會", "半導體", "漲停"]
+            found_tags = [kw for kw in keywords if kw in all_text]
+            tags = found_tags[:4] if found_tags else ["盤整", "觀望"]
         else:
             summary_text = "目前市場無重大突發消息，呈現量縮整理格局。"
-            
-        all_text = "".join(titles)
-        keywords = ["台積電", "AI", "外資", "散熱", "鴻海", "聯發科", "降息", "ETF", "營收", "法說會", "半導體"]
-        found_tags = [kw for kw in keywords if kw in all_text]
-        tags = found_tags[:4] if found_tags else ["盤整", "觀望"]
+            tags = ["平穩", "量縮"]
         return summary_text, tags
-    except:
-        return "無法取得即時新聞，請檢查網路連線。", ["連線異常"]
+    except Exception as e:
+        return f"新聞擷取保護啟動，暫無最新摘要。", ["防護中"]
 
 @st.cache_data(ttl=600)
 def get_indices():
-    # 💡 修正：移除常出錯的櫃買指數，換成對台股影響最大的台積電ADR
-    indices_dict = {"加權指數": "^TWII", "台積電 ADR": "TSM", "費城半導體": "^SOX"}
+    indices_dict = {"加權指數": "^TWII", "櫃買指數": "^TWO", "費城半導體": "^SOX"}
     res = {}
     for name, symbol in indices_dict.items():
         try:
-            hist = yf.Ticker(symbol).history(period="5d")
+            # 傳入 session 避免被擋
+            hist = yf.Ticker(symbol, session=safe_session).history(period="5d")
             if len(hist) >= 2:
                 close, prev = float(hist['Close'].iloc[-1]), float(hist['Close'].iloc[-2])
                 res[name] = {"現價": round(close, 2), "漲跌幅": round((close-prev)/prev*100, 2)}
@@ -117,10 +125,10 @@ def fetch_single_stock(symbol):
     try:
         symbol = str(symbol).strip()
         tkr = f"{symbol}.TW"
-        hist = yf.Ticker(tkr).history(period="6mo")
+        hist = yf.Ticker(tkr, session=safe_session).history(period="6mo")
         if hist.empty:
             tkr = f"{symbol}.TWO"
-            hist = yf.Ticker(tkr).history(period="6mo")
+            hist = yf.Ticker(tkr, session=safe_session).history(period="6mo")
         if hist.empty or len(hist) < 20: return None, ""
         name = get_tw_stock_name(symbol)
         display_name = f"🎯 搜尋結果: {name} ({symbol})"
@@ -129,13 +137,14 @@ def fetch_single_stock(symbol):
     except: return None, ""
 
 @st.cache_data(ttl=600)
-def get_stock_data_v91(stock_dict):
+def get_stock_data_v92(stock_dict):
     data_list, price_history_dict = [], {}
     if not stock_dict: return pd.DataFrame(data_list), price_history_dict
 
     tickers = [f"{s}.TW" for s in stock_dict.keys()] + [f"{s}.TWO" for s in stock_dict.keys()]
     try:
-        batch = yf.download(tickers, period="6mo", group_by="ticker", progress=False, threads=True)
+        # 💡 最重要的一步：將偽裝面具 session 傳給大批次下載引擎！
+        batch = yf.download(tickers, period="6mo", group_by="ticker", progress=False, threads=True, session=safe_session)
     except: return pd.DataFrame(), {}
 
     for symbol, name in stock_dict.items():
@@ -232,9 +241,9 @@ def color_strategy(val):
 st.title("概覽")
 
 with st.spinner("🚀 系統載入與核心運算中..."):
-    # 💡 V91 修復：在這裡把巢狀字典強制攤平為單層字典！
+    # 攤平字典交給大引擎處理
     flat_stock_dict = {sym: name for theme_dict in STOCK_DB.values() for sym, name in theme_dict.items()}
-    df_all, hist_all = get_stock_data_v91(flat_stock_dict)
+    df_all, hist_all = get_stock_data_v92(flat_stock_dict)
 
 # --- 區塊 1：AI 市場摘要卡片 ---
 summary_text, tags = get_market_summary_and_tags()
@@ -285,7 +294,8 @@ with tab_group:
     if not df_all.empty:
         st.write("各族群平均漲跌幅 (觀察資金流向)")
         group_df = df_all.groupby('所屬題材')['漲跌幅(%)'].mean().reset_index().sort_values("漲跌幅(%)", ascending=False)
-        st.dataframe(group_df, use_container_width=True, hide_index=True)
+        # 💡 新版寫法：解決 use_container_width 的過期警告
+        st.dataframe(group_df, width="stretch", hide_index=True)
 
 with tab_scan:
     if not df_all.empty:
@@ -297,7 +307,8 @@ with tab_scan:
         elif filter_opt == "🐎 僅顯示潛在黑馬":
             df_display = df_display[df_display['黑馬潛力'].str.contains("🐎")]
             
-        st.dataframe(df_display[['所屬題材', '指標股', '漲跌幅(%)', '現價', 'POC鐵板價', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略', '黑馬潛力']), use_container_width=True, hide_index=True)
+        # 💡 新版寫法：解決 use_container_width 的過期警告
+        st.dataframe(df_display[['所屬題材', '指標股', '漲跌幅(%)', '現價', 'POC鐵板價', '波段策略', '黑馬潛力', '籌碼動能']].style.map(color_strategy, subset=['波段策略', '黑馬潛力']), width="stretch", hide_index=True)
 
 with tab_chart:
     st.write("輸入代號，調閱完整技術指標與量能 (含 K線、成交量、MACD、OBV)")
@@ -305,5 +316,7 @@ with tab_chart:
     if search_sym:
         with st.spinner("分析中..."):
             s_hist, s_name = fetch_single_stock(search_sym)
-            if s_hist is not None: st.plotly_chart(plot_advanced_k_volume(s_hist, s_name), use_container_width=True)
-            else: st.error("找不到該代號，請確認輸入是否正確。")
+            if s_hist is not None: 
+                st.plotly_chart(plot_advanced_k_volume(s_hist, s_name), use_container_width=True)
+            else: 
+                st.error("找不到該代號，請確認輸入是否正確。")
